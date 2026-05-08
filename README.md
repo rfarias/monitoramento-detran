@@ -125,11 +125,11 @@ Esses arquivos sao operacionais, assim como a planilha de veiculos, e ficam fora
 
 ## Agendamento No Windows
 
-Para agendar todos os dias as 08:00:
+Para agendar de segunda a sexta as 12:00, horario de Brasilia:
 
 ```powershell
 cd detran-ce-api
-.\agendar-monitoramento-windows.bat 08:00
+.\agendar-monitoramento-windows.bat
 ```
 
 Para executar manualmente pelo arquivo `.bat`:

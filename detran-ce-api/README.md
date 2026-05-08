@@ -261,10 +261,10 @@ Monitoramento Detran-CE - 07/05/2026, 16:08
 - YYY1111: debito de IPVA.
 ```
 
-Para agendar no Windows todos os dias as 08:00:
+Para agendar no Windows de segunda a sexta as 12:00, horario de Brasilia:
 
 ```bat
-agendar-monitoramento-windows.bat 08:00
+agendar-monitoramento-windows.bat
 ```
 
 Para testar manualmente:
