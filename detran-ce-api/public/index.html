@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Monitoramento Detran-CE</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <h1>Monitoramento Detran-CE</h1>
+          <p>Consulta de multas, IPVA e licenciamento por planilha.</p>
+        </div>
+        <div class="key-box">
+          <label for="apiKey">Chave</label>
+          <input id="apiKey" type="password" autocomplete="off" placeholder="x-api-key" />
+        </div>
+      </header>
+
+      <section class="toolbar">
+        <form id="uploadForm" class="upload-form">
+          <input id="planilha" name="planilha" type="file" accept=".xlsx,.csv" />
+          <button type="submit">Enviar planilha</button>
+        </form>
+        <div class="actions">
+          <button id="listarBtn" type="button">Listar veículos</button>
+          <button id="consultarBtn" type="button" class="primary">Consultar todos</button>
+        </div>
+      </section>
+
+      <section class="summary-grid">
+        <div class="metric">
+          <span>Total</span>
+          <strong id="totalVeiculos">0</strong>
+        </div>
+        <div class="metric pending">
+          <span>Com pendências</span>
+          <strong id="totalPendencias">0</strong>
+        </div>
+        <div class="metric clean">
+          <span>Sem pendências</span>
+          <strong id="totalSemPendencias">0</strong>
+        </div>
+        <div class="metric error">
+          <span>Erros</span>
+          <strong id="totalErros">0</strong>
+        </div>
+      </section>
+
+      <div id="status" class="status">Pronto.</div>
+
+      <section class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Placa</th>
+              <th>Renavam</th>
+              <th>Status</th>
+              <th>Pendências</th>
+              <th>Consulta</th>
+            </tr>
+          </thead>
+          <tbody id="resultadosBody"></tbody>
+        </table>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

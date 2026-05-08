@@ -1,0 +1,29 @@
+{
+  "name": "detran-ce-api",
+  "version": "1.0.0",
+  "description": "API local para consulta de multas, taxas, licenciamento e debitos de veiculos no Detran-CE.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "monitor": "node src/monitor.js",
+    "install-browsers": "npx playwright install chromium"
+  },
+  "keywords": [
+    "detran-ce",
+    "playwright",
+    "express",
+    "veiculos"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "csv-parse": "^5.5.6",
+    "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
+    "express": "^4.18.3",
+    "multer": "^2.1.1",
+    "nodemailer": "^8.0.7",
+    "playwright": "^1.43.1"
+  }
+}
