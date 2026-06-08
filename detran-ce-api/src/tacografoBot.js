@@ -1,0 +1,272 @@
+require("dotenv").config();
+
+const { chromium } = require("playwright");
+
+const TACOGRAFO_URL =
+  process.env.TACOGRAFO_URL || "https://cronotacografo.rbmlq.gov.br/certificados/consultar";
+const DIAS_ALERTA = Number(process.env.TACOGRAFO_DIAS_ALERTA || 30);
+
+function toBool(value) {
+  return String(value).toLowerCase() === "true";
+}
+
+function normalizarTexto(text) {
+  return String(text || "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function parseDateBR(text) {
+  const match = String(text || "").match(/\b(\d{2})\/(\d{2})\/(\d{4})\b/);
+  if (!match) return null;
+  return new Date(`${match[3]}-${match[2]}-${match[1]}T00:00:00`);
+}
+
+function calcularDiasParaVencer(vencimentoDate) {
+  if (!vencimentoDate) return null;
+  const hoje = new Date();
+  hoje.setHours(0, 0, 0, 0);
+  return Math.ceil((vencimentoDate.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+function calcularAlertas(tipoDocumento, diasParaVencer) {
+  const alertas = [];
+  const tipo = normalizarTexto(tipoDocumento);
+
+  if (tipo && tipo !== "final") {
+    alertas.push("documento_nao_final");
+  }
+
+  if (diasParaVencer !== null) {
+    if (diasParaVencer < 0) {
+      alertas.push("vencido");
+    } else if (diasParaVencer <= DIAS_ALERTA) {
+      alertas.push("proximo_vencimento");
+    }
+  }
+
+  return alertas;
+}
+
+async function extrairIndicesColunas(table) {
+  const headerRow = table.locator("thead tr, tr:first-child").first();
+  const cells = headerRow.locator("th, td");
+  const count = await cells.count().catch(() => 0);
+
+  const headers = [];
+  for (let i = 0; i < count; i += 1) {
+    headers.push(normalizarTexto(await cells.nth(i).innerText().catch(() => "")));
+  }
+
+  return {
+    documento: headers.findIndex(
+      (h) =>
+        h.includes("documento") ||
+        h === "tipo" ||
+        h.includes("tipo do") ||
+        h.includes("certificado")
+    ),
+    vencimento: headers.findIndex(
+      (h) =>
+        h.includes("vencimento") ||
+        h.includes("validade") ||
+        h.includes("vigencia") ||
+        h.includes("data de")
+    )
+  };
+}
+
+async function parsearCertificadosDaTabela(page) {
+  const certificados = [];
+  const tables = page.locator("table");
+  const tableCount = await tables.count().catch(() => 0);
+
+  for (let t = 0; t < tableCount; t += 1) {
+    const table = tables.nth(t);
+    const indices = await extrairIndicesColunas(table).catch(() => ({
+      documento: -1,
+      vencimento: -1
+    }));
+
+    const dataRows = table.locator("tbody tr");
+    const rowCount = await dataRows.count().catch(() => 0);
+
+    for (let i = 0; i < rowCount; i += 1) {
+      const row = dataRows.nth(i);
+      const cells = row.locator("td");
+      const cellCount = await cells.count().catch(() => 0);
+      if (!cellCount) continue;
+
+      const cellTexts = [];
+      for (let j = 0; j < cellCount; j += 1) {
+        cellTexts.push((await cells.nth(j).innerText().catch(() => "")).trim());
+      }
+
+      if (!cellTexts.some((c) => c.length > 1)) continue;
+
+      let tipoDocumento = indices.documento >= 0 ? (cellTexts[indices.documento] || "") : "";
+      let vencimentoText = indices.vencimento >= 0 ? (cellTexts[indices.vencimento] || "") : "";
+
+      // Fallback: varredura de células por padrão de data e tipo
+      if (!vencimentoText || !tipoDocumento) {
+        for (const cell of cellTexts) {
+          const norm = normalizarTexto(cell);
+          if (!vencimentoText && /^\d{2}\/\d{2}\/\d{4}$/.test(cell.trim())) {
+            vencimentoText = cell;
+          }
+          if (!tipoDocumento && (norm === "final" || norm === "provisorio" || norm === "cancelado")) {
+            tipoDocumento = cell;
+          }
+        }
+      }
+
+      const vencimentoDate = parseDateBR(vencimentoText);
+      const diasParaVencer = calcularDiasParaVencer(vencimentoDate);
+      const alertas = calcularAlertas(tipoDocumento, diasParaVencer);
+
+      certificados.push({
+        tipoDocumento: tipoDocumento || null,
+        vencimento: vencimentoDate ? vencimentoDate.toISOString().slice(0, 10) : null,
+        diasParaVencer,
+        alertas,
+        dadosBrutos: cellTexts.join(" | ")
+      });
+    }
+
+    if (certificados.length) break;
+  }
+
+  return certificados;
+}
+
+async function consultarTacografo(placa) {
+  const browser = await chromium.launch({
+    headless: toBool(process.env.HEADLESS ?? "true")
+  });
+
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  page.setDefaultTimeout(Number(process.env.PLAYWRIGHT_TIMEOUT_MS || 45000));
+
+  try {
+    console.log(`[Tacografo] Consultando ${placa}`);
+    await page.goto(TACOGRAFO_URL, {
+      waitUntil: "domcontentloaded",
+      timeout: Number(process.env.PLAYWRIGHT_NAVIGATION_TIMEOUT_MS || 45000)
+    });
+    await page.waitForLoadState("load", { timeout: 15000 }).catch(() => null);
+    await page.waitForTimeout(Number(process.env.PLAYWRIGHT_INITIAL_LOAD_DELAY_MS || 500));
+
+    const placaSelectors = [
+      "input[name='placa']",
+      "input[id*='placa' i]",
+      "input[name*='placa' i]",
+      "input[placeholder*='Placa' i]",
+      "input[placeholder*='placa' i]",
+      "input[aria-label*='placa' i]",
+      "input[type='text']:first-of-type"
+    ];
+
+    let placaInput = null;
+    for (const sel of placaSelectors) {
+      const el = page.locator(sel).first();
+      if (await el.isVisible().catch(() => false)) {
+        placaInput = el;
+        console.log(`[Tacografo] Campo de placa encontrado: ${sel}`);
+        break;
+      }
+    }
+
+    if (!placaInput) {
+      throw new Error("Campo de placa nao encontrado na pagina do tacografo");
+    }
+
+    await placaInput.fill(placa);
+
+    const submitSelectors = [
+      "button[type='submit']",
+      "input[type='submit']",
+      "button:has-text('Consultar')",
+      "button:has-text('Pesquisar')",
+      "button:has-text('Buscar')",
+      "input[value*='Consultar' i]",
+      "a:has-text('Consultar')"
+    ];
+
+    let submitBtn = null;
+    for (const sel of submitSelectors) {
+      const el = page.locator(sel).first();
+      if (await el.isVisible().catch(() => false)) {
+        submitBtn = el;
+        console.log(`[Tacografo] Botao de consulta encontrado: ${sel}`);
+        break;
+      }
+    }
+
+    if (!submitBtn) {
+      throw new Error("Botao de consulta nao encontrado na pagina do tacografo");
+    }
+
+    await Promise.all([
+      page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => null),
+      submitBtn.click()
+    ]);
+    await page.waitForTimeout(Number(process.env.PLAYWRIGHT_RESULT_DELAY_MS || 1200));
+
+    const textoResultado = await page
+      .locator("body")
+      .innerText({ timeout: 5000 })
+      .catch(() => "");
+    const textoNorm = normalizarTexto(textoResultado);
+
+    const certificados = await parsearCertificadosDaTabela(page);
+
+    if (
+      !certificados.length &&
+      /nenhum|nao encontrado|sem resultado|nao ha|nao foram encontrados/.test(textoNorm)
+    ) {
+      console.log(`[Tacografo] Sem certificados registrados para ${placa}`);
+      return {
+        placa,
+        consultadoEm: new Date().toISOString(),
+        status: "sem_certificado",
+        certificados: [],
+        alertas: [],
+        erro: null
+      };
+    }
+
+    const todosAlertas = [...new Set(certificados.flatMap((c) => c.alertas))];
+
+    console.log(
+      `[Tacografo] ${placa}: ${certificados.length} certificado(s), alertas: [${todosAlertas.join(", ") || "nenhum"}]`
+    );
+
+    return {
+      placa,
+      consultadoEm: new Date().toISOString(),
+      status: todosAlertas.length ? "com_alertas" : "ok",
+      certificados,
+      alertas: todosAlertas,
+      erro: null
+    };
+  } catch (error) {
+    console.error(`[Tacografo] Erro ao consultar ${placa}: ${error.message}`);
+    return {
+      placa,
+      consultadoEm: new Date().toISOString(),
+      status: "erro",
+      certificados: [],
+      alertas: [],
+      erro: error.message
+    };
+  } finally {
+    await context.close().catch(() => null);
+    await browser.close().catch(() => null);
+  }
+}
+
+module.exports = { consultarTacografo };

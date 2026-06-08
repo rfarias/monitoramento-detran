@@ -7,7 +7,16 @@ const path = require("path");
 const { lerPlanilha } = require("./spreadsheet");
 const { validarVeiculo, normalizarPlaca } = require("./validators");
 const { consultarVeiculoDetranCe } = require("./detranCeBot");
-const { garantirDiretorios, lerHistorico, adicionarConsulta, obterUltimaConsultaPorPlaca } = require("./storage");
+const { consultarTacografo } = require("./tacografoBot");
+const {
+  garantirDiretorios,
+  lerHistorico,
+  adicionarConsulta,
+  obterUltimaConsultaPorPlaca,
+  lerHistoricoTacografo,
+  adicionarConsultaTacografo,
+  obterUltimaConsultaTacografoPorPlaca
+} = require("./storage");
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -200,6 +209,69 @@ app.get("/veiculo/:placa", async (req, res) => {
     return res.json(ultimaConsulta);
   } catch (error) {
     return res.status(500).json({ erro: error.message });
+  }
+});
+
+app.post("/consultar-tacografo", async (req, res) => {
+  const placa = normalizarPlaca(req.body?.placa);
+  if (!placa) {
+    return res.status(400).json({ erro: "placa e obrigatoria" });
+  }
+
+  const resultado = await consultarTacografo(placa);
+  await adicionarConsultaTacografo(resultado);
+
+  return res.status(resultado.status === "erro" ? 502 : 200).json(resultado);
+});
+
+app.post("/consultar-tacografos", async (req, res) => {
+  try {
+    const planilhaPath = await obterPlanilhaAtual();
+    const veiculos = await lerPlanilha(planilhaPath);
+    const resultados = [];
+
+    for (let i = 0; i < veiculos.length; i += 1) {
+      const veiculo = veiculos[i];
+      console.log(`[API] Tacografo ${i + 1}/${veiculos.length}: ${veiculo.placa}`);
+
+      const resultado = await consultarTacografo(veiculo.placa);
+      await adicionarConsultaTacografo(resultado);
+      resultados.push(resultado);
+
+      if (i < veiculos.length - 1 && DELAY_ENTRE_CONSULTAS_MS > 0) {
+        await sleep(DELAY_ENTRE_CONSULTAS_MS);
+      }
+    }
+
+    res.json({ total: resultados.length, resultados });
+  } catch (error) {
+    res.status(400).json({ erro: error.message });
+  }
+});
+
+app.get("/veiculo/:placa/tacografo", async (req, res) => {
+  try {
+    const placa = normalizarPlaca(req.params.placa);
+    const ultimaConsulta = await obterUltimaConsultaTacografoPorPlaca(placa);
+
+    if (!ultimaConsulta) {
+      return res
+        .status(404)
+        .json({ erro: `Nenhuma consulta de tacografo encontrada para a placa ${placa}` });
+    }
+
+    return res.json(ultimaConsulta);
+  } catch (error) {
+    return res.status(500).json({ erro: error.message });
+  }
+});
+
+app.get("/historico-tacografo", async (req, res) => {
+  try {
+    const historico = await lerHistoricoTacografo();
+    res.json({ total: historico.length, historico });
+  } catch (error) {
+    res.status(500).json({ erro: error.message });
   }
 });
 

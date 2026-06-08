@@ -7,6 +7,8 @@
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "monitor": "node src/monitor.js",
+    "monitor-tacografo": "node src/monitorTacografo.js",
+    "monitor-combinado": "node src/monitorCombinado.js",
     "install-browsers": "npx playwright install chromium"
   },
   "keywords": [
