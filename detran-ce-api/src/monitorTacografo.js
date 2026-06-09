@@ -3,22 +3,17 @@ require("dotenv").config();
 const fs = require("fs/promises");
 const path = require("path");
 const { lerPlanilha } = require("./spreadsheet");
-const { consultarTacografo } = require("./tacografoBot");
+const { consultarTacografosEmLote } = require("./tacografoBot");
 const { adicionarConsultaTacografo, garantirDiretorios } = require("./storage");
 const { notificarTacografo } = require("./notifier");
 
 const PLANILHA_PATH = process.env.PLANILHA_PATH || "./data/veiculos.xlsx";
-const DELAY_ENTRE_CONSULTAS_MS = Number(process.env.DELAY_ENTRE_CONSULTAS_MS || 5000);
 const TACOGRAFO_LOG_PATH = path.resolve(
   process.env.TACOGRAFO_LOG_PATH || "./data/tacografo-log.json"
 );
 const TACOGRAFO_MESSAGE_PATH = path.resolve(
   process.env.TACOGRAFO_MESSAGE_PATH || "./data/ultima-mensagem-tacografo.txt"
 );
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 async function lerLogTacografo() {
   try {
@@ -65,28 +60,17 @@ async function executarMonitoramentoTacografo() {
 
   console.log(`[Monitor Tacografo] Lendo planilha: ${PLANILHA_PATH}`);
   const veiculos = await lerPlanilha(PLANILHA_PATH);
-  const resultados = [];
+  const placas = veiculos.map((v) => v.placa);
+
+  console.log(`[Monitor Tacografo] Consultando ${placas.length} veiculos em lote (sessao unica)...`);
+  const resultados = await consultarTacografosEmLote(placas);
+
   const resultadosComAlerta = [];
-
-  for (let i = 0; i < veiculos.length; i += 1) {
-    const veiculo = veiculos[i];
-    console.log(
-      `[Monitor Tacografo] Consultando ${i + 1}/${veiculos.length}: ${veiculo.placa}`
-    );
-
-    const resultado = await consultarTacografo(veiculo.placa);
+  for (const resultado of resultados) {
     await adicionarConsultaTacografo(resultado);
-    resultados.push(resultado);
-
     if (resultado.status === "com_alertas") {
       resultadosComAlerta.push(resultado);
-      console.log(
-        `[Monitor Tacografo] Alerta: ${veiculo.placa} [${resultado.alertas.join(", ")}]`
-      );
-    }
-
-    if (i < veiculos.length - 1 && DELAY_ENTRE_CONSULTAS_MS > 0) {
-      await sleep(DELAY_ENTRE_CONSULTAS_MS);
+      console.log(`[Monitor Tacografo] Alerta: ${resultado.placa} [${resultado.alertas.join(", ")}]`);
     }
   }
 

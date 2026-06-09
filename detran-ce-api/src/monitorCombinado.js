@@ -4,7 +4,7 @@ const fs = require("fs/promises");
 const path = require("path");
 const { lerPlanilha } = require("./spreadsheet");
 const { consultarVeiculoDetranCe } = require("./detranCeBot");
-const { consultarTacografo } = require("./tacografoBot");
+const { consultarTacografosEmLote } = require("./tacografoBot");
 const { adicionarConsulta, adicionarConsultaTacografo, garantirDiretorios } = require("./storage");
 const { notificarCombinado } = require("./notifier");
 
@@ -107,23 +107,15 @@ async function executarMonitoramentoCombinado() {
   console.log(`[Monitor Detran] Concluido. Pendencias: ${detranComPendencia.length}/${veiculos.length}`);
 
   // --- Tacografo ---
-  console.log("[Monitor] Iniciando consultas Tacografo...");
+  console.log(`[Monitor] Iniciando consultas Tacografo (${veiculos.length} veiculos em lote, sessao unica)...`);
+  const tacografoResultados = await consultarTacografosEmLote(veiculos.map((v) => v.placa));
   const tacografoComAlerta = [];
 
-  for (let i = 0; i < veiculos.length; i += 1) {
-    const veiculo = veiculos[i];
-    console.log(`[Monitor Tacografo] ${i + 1}/${veiculos.length}: ${veiculo.placa}`);
-
-    const resultado = await consultarTacografo(veiculo.placa);
+  for (const resultado of tacografoResultados) {
     await adicionarConsultaTacografo(resultado);
-
     if (resultado.status === "com_alertas") {
       tacografoComAlerta.push(resultado);
-      console.log(`[Monitor Tacografo] Alerta: ${veiculo.placa} [${resultado.alertas.join(", ")}]`);
-    }
-
-    if (i < veiculos.length - 1 && DELAY_ENTRE_CONSULTAS_MS > 0) {
-      await sleep(DELAY_ENTRE_CONSULTAS_MS);
+      console.log(`[Monitor Tacografo] Alerta: ${resultado.placa} [${resultado.alertas.join(", ")}]`);
     }
   }
 

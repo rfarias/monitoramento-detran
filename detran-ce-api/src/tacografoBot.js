@@ -112,7 +112,6 @@ async function parsearCertificadosDaTabela(page) {
       let tipoDocumento = indices.documento >= 0 ? (cellTexts[indices.documento] || "") : "";
       let vencimentoText = indices.vencimento >= 0 ? (cellTexts[indices.vencimento] || "") : "";
 
-      // Fallback: varredura de células por padrão de data e tipo
       if (!vencimentoText || !tipoDocumento) {
         for (const cell of cellTexts) {
           const norm = normalizarTexto(cell);
@@ -144,7 +143,131 @@ async function parsearCertificadosDaTabela(page) {
   return certificados;
 }
 
-async function consultarTacografo(placa) {
+function montarResultado(placa, certificados, textoNorm) {
+  if (
+    !certificados.length &&
+    /nenhum|nao encontrado|sem resultado|nao ha|nao foram encontrados/.test(textoNorm)
+  ) {
+    console.log(`[Tacografo] Sem certificados registrados para ${placa}`);
+    return {
+      placa,
+      consultadoEm: new Date().toISOString(),
+      status: "sem_certificado",
+      certificados: [],
+      alertas: [],
+      erro: null
+    };
+  }
+
+  const todosAlertas = [...new Set(certificados.flatMap((c) => c.alertas))];
+  console.log(
+    `[Tacografo] ${placa}: ${certificados.length} certificado(s), alertas: [${todosAlertas.join(", ") || "nenhum"}]`
+  );
+
+  return {
+    placa,
+    consultadoEm: new Date().toISOString(),
+    status: todosAlertas.length ? "com_alertas" : "ok",
+    certificados,
+    alertas: todosAlertas,
+    erro: null
+  };
+}
+
+function montarResultadoErro(placa, mensagem) {
+  return {
+    placa,
+    consultadoEm: new Date().toISOString(),
+    status: "erro",
+    certificados: [],
+    alertas: [],
+    erro: mensagem
+  };
+}
+
+async function aguardarReCaptcha(page) {
+  const captchaTimeoutMs = Number(process.env.TACOGRAFO_CAPTCHA_TIMEOUT_MS || 12000);
+  await page
+    .waitForFunction(
+      () => {
+        const btn = document.getElementById("enviar");
+        return btn && !btn.disabled;
+      },
+      { timeout: captchaTimeoutMs }
+    )
+    .catch(() => null);
+
+  return page
+    .evaluate(() => {
+      const btn = document.getElementById("enviar");
+      return btn ? !btn.disabled : false;
+    })
+    .catch(() => false);
+}
+
+async function consultarPlacaNaPagina(page, placa) {
+  console.log(`[Tacografo] Consultando ${placa}`);
+
+  await page.goto(TACOGRAFO_URL, {
+    waitUntil: "domcontentloaded",
+    timeout: Number(process.env.PLAYWRIGHT_NAVIGATION_TIMEOUT_MS || 45000)
+  });
+  await page.waitForLoadState("load", { timeout: 15000 }).catch(() => null);
+  await page.waitForTimeout(Number(process.env.PLAYWRIGHT_INITIAL_LOAD_DELAY_MS || 500));
+
+  const placaSelectors = [
+    "#CrVerificacaoGruServicoVeiculoPlaca",
+    "input.placaBrasil",
+    "input[id*='placa' i]",
+    "input[name*='placa' i]",
+    "input[placeholder*='Placa' i]",
+    "input[aria-label*='placa' i]",
+    "input[type='text']:first-of-type"
+  ];
+
+  let placaInput = null;
+  for (const sel of placaSelectors) {
+    const el = page.locator(sel).first();
+    if (await el.isVisible().catch(() => false)) {
+      placaInput = el;
+      console.log(`[Tacografo] Campo de placa encontrado: ${sel}`);
+      break;
+    }
+  }
+
+  if (!placaInput) {
+    throw new Error("Campo de placa nao encontrado na pagina do tacografo");
+  }
+
+  await placaInput.fill(placa);
+
+  console.log(`[Tacografo] Aguardando reCAPTCHA para ${placa}...`);
+  const aprovado = await aguardarReCaptcha(page);
+
+  if (!aprovado) {
+    throw new Error("reCAPTCHA nao verificado automaticamente");
+  }
+
+  console.log(`[Tacografo] reCAPTCHA aprovado, submetendo para ${placa}`);
+  await Promise.all([
+    page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => null),
+    page.locator("button#enviar").click()
+  ]);
+  await page.waitForTimeout(Number(process.env.PLAYWRIGHT_RESULT_DELAY_MS || 1200));
+
+  const textoResultado = await page
+    .locator("body")
+    .innerText({ timeout: 5000 })
+    .catch(() => "");
+
+  const certificados = await parsearCertificadosDaTabela(page);
+  return montarResultado(placa, certificados, normalizarTexto(textoResultado));
+}
+
+// Consulta em lote: um único browser/sessão para todas as placas.
+// Os cookies do reCAPTCHA acumulam confiança ao longo da sessão,
+// aumentando a taxa de auto-aprovação a partir da primeira verificação.
+async function consultarTacografosEmLote(placas) {
   const browser = await chromiumExtra.launch({
     headless: toBool(process.env.HEADLESS ?? "true")
   });
@@ -156,128 +279,34 @@ async function consultarTacografo(placa) {
     locale: "pt-BR",
     timezoneId: "America/Sao_Paulo"
   });
+
   const page = await context.newPage();
   page.setDefaultTimeout(Number(process.env.PLAYWRIGHT_TIMEOUT_MS || 45000));
 
+  const resultados = [];
+
   try {
-    console.log(`[Tacografo] Consultando ${placa}`);
-    await page.goto(TACOGRAFO_URL, {
-      waitUntil: "domcontentloaded",
-      timeout: Number(process.env.PLAYWRIGHT_NAVIGATION_TIMEOUT_MS || 45000)
-    });
-    await page.waitForLoadState("load", { timeout: 15000 }).catch(() => null);
-    await page.waitForTimeout(Number(process.env.PLAYWRIGHT_INITIAL_LOAD_DELAY_MS || 500));
-
-    const placaSelectors = [
-      "#CrVerificacaoGruServicoVeiculoPlaca",
-      "input.placaBrasil",
-      "input[id*='placa' i]",
-      "input[name*='placa' i]",
-      "input[placeholder*='Placa' i]",
-      "input[aria-label*='placa' i]",
-      "input[type='text']:first-of-type"
-    ];
-
-    let placaInput = null;
-    for (const sel of placaSelectors) {
-      const el = page.locator(sel).first();
-      if (await el.isVisible().catch(() => false)) {
-        placaInput = el;
-        console.log(`[Tacografo] Campo de placa encontrado: ${sel}`);
-        break;
+    for (const placa of placas) {
+      try {
+        const resultado = await consultarPlacaNaPagina(page, placa);
+        resultados.push(resultado);
+      } catch (error) {
+        console.error(`[Tacografo] Erro ao consultar ${placa}: ${error.message}`);
+        resultados.push(montarResultadoErro(placa, error.message));
       }
     }
-
-    if (!placaInput) {
-      throw new Error("Campo de placa nao encontrado na pagina do tacografo");
-    }
-
-    await placaInput.fill(placa);
-
-    // Aguarda o reCAPTCHA auto-verificar (stealth mode aumenta a taxa de aprovação)
-    const captchaTimeoutMs = Number(process.env.TACOGRAFO_CAPTCHA_TIMEOUT_MS || 12000);
-    console.log(`[Tacografo] Aguardando reCAPTCHA para ${placa} (${captchaTimeoutMs}ms)...`);
-    await page
-      .waitForFunction(
-        () => {
-          const btn = document.getElementById("enviar");
-          return btn && !btn.disabled;
-        },
-        { timeout: captchaTimeoutMs }
-      )
-      .catch(() => null);
-
-    const btnHabilitado = await page
-      .evaluate(() => {
-        const btn = document.getElementById("enviar");
-        return btn ? !btn.disabled : false;
-      })
-      .catch(() => false);
-
-    if (!btnHabilitado) {
-      throw new Error(
-        "reCAPTCHA nao verificado automaticamente. Configure HEADLESS=false para resolver manualmente ou use TACOGRAFO_CAPTCHA_TIMEOUT_MS para aumentar o tempo de espera."
-      );
-    }
-
-    console.log(`[Tacografo] reCAPTCHA aprovado, submetendo para ${placa}`);
-    await Promise.all([
-      page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => null),
-      page.locator("button#enviar").click()
-    ]);
-    await page.waitForTimeout(Number(process.env.PLAYWRIGHT_RESULT_DELAY_MS || 1200));
-
-    const textoResultado = await page
-      .locator("body")
-      .innerText({ timeout: 5000 })
-      .catch(() => "");
-    const textoNorm = normalizarTexto(textoResultado);
-
-    const certificados = await parsearCertificadosDaTabela(page);
-
-    if (
-      !certificados.length &&
-      /nenhum|nao encontrado|sem resultado|nao ha|nao foram encontrados/.test(textoNorm)
-    ) {
-      console.log(`[Tacografo] Sem certificados registrados para ${placa}`);
-      return {
-        placa,
-        consultadoEm: new Date().toISOString(),
-        status: "sem_certificado",
-        certificados: [],
-        alertas: [],
-        erro: null
-      };
-    }
-
-    const todosAlertas = [...new Set(certificados.flatMap((c) => c.alertas))];
-
-    console.log(
-      `[Tacografo] ${placa}: ${certificados.length} certificado(s), alertas: [${todosAlertas.join(", ") || "nenhum"}]`
-    );
-
-    return {
-      placa,
-      consultadoEm: new Date().toISOString(),
-      status: todosAlertas.length ? "com_alertas" : "ok",
-      certificados,
-      alertas: todosAlertas,
-      erro: null
-    };
-  } catch (error) {
-    console.error(`[Tacografo] Erro ao consultar ${placa}: ${error.message}`);
-    return {
-      placa,
-      consultadoEm: new Date().toISOString(),
-      status: "erro",
-      certificados: [],
-      alertas: [],
-      erro: error.message
-    };
   } finally {
     await context.close().catch(() => null);
     await browser.close().catch(() => null);
   }
+
+  return resultados;
 }
 
-module.exports = { consultarTacografo };
+// Consulta individual: mantida para uso na API (POST /consultar-tacografo).
+async function consultarTacografo(placa) {
+  const resultados = await consultarTacografosEmLote([placa]);
+  return resultados[0];
+}
+
+module.exports = { consultarTacografo, consultarTacografosEmLote };
