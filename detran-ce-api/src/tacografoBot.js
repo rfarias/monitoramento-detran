@@ -1,6 +1,8 @@
 require("dotenv").config();
 
-const { chromium } = require("playwright");
+const { chromium: chromiumExtra } = require("playwright-extra");
+const StealthPlugin = require("puppeteer-extra-plugin-stealth");
+chromiumExtra.use(StealthPlugin());
 
 const TACOGRAFO_URL =
   process.env.TACOGRAFO_URL || "https://cronotacografo.rbmlq.gov.br/certificados/consultar";
@@ -143,11 +145,17 @@ async function parsearCertificadosDaTabela(page) {
 }
 
 async function consultarTacografo(placa) {
-  const browser = await chromium.launch({
+  const browser = await chromiumExtra.launch({
     headless: toBool(process.env.HEADLESS ?? "true")
   });
 
-  const context = await browser.newContext();
+  const context = await browser.newContext({
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    viewport: { width: 1280, height: 720 },
+    locale: "pt-BR",
+    timezoneId: "America/Sao_Paulo"
+  });
   const page = await context.newPage();
   page.setDefaultTimeout(Number(process.env.PLAYWRIGHT_TIMEOUT_MS || 45000));
 
@@ -161,11 +169,11 @@ async function consultarTacografo(placa) {
     await page.waitForTimeout(Number(process.env.PLAYWRIGHT_INITIAL_LOAD_DELAY_MS || 500));
 
     const placaSelectors = [
-      "input[name='placa']",
+      "#CrVerificacaoGruServicoVeiculoPlaca",
+      "input.placaBrasil",
       "input[id*='placa' i]",
       "input[name*='placa' i]",
       "input[placeholder*='Placa' i]",
-      "input[placeholder*='placa' i]",
       "input[aria-label*='placa' i]",
       "input[type='text']:first-of-type"
     ];
@@ -186,33 +194,36 @@ async function consultarTacografo(placa) {
 
     await placaInput.fill(placa);
 
-    const submitSelectors = [
-      "button[type='submit']",
-      "input[type='submit']",
-      "button:has-text('Consultar')",
-      "button:has-text('Pesquisar')",
-      "button:has-text('Buscar')",
-      "input[value*='Consultar' i]",
-      "a:has-text('Consultar')"
-    ];
+    // Aguarda o reCAPTCHA auto-verificar (stealth mode aumenta a taxa de aprovação)
+    const captchaTimeoutMs = Number(process.env.TACOGRAFO_CAPTCHA_TIMEOUT_MS || 12000);
+    console.log(`[Tacografo] Aguardando reCAPTCHA para ${placa} (${captchaTimeoutMs}ms)...`);
+    await page
+      .waitForFunction(
+        () => {
+          const btn = document.getElementById("enviar");
+          return btn && !btn.disabled;
+        },
+        { timeout: captchaTimeoutMs }
+      )
+      .catch(() => null);
 
-    let submitBtn = null;
-    for (const sel of submitSelectors) {
-      const el = page.locator(sel).first();
-      if (await el.isVisible().catch(() => false)) {
-        submitBtn = el;
-        console.log(`[Tacografo] Botao de consulta encontrado: ${sel}`);
-        break;
-      }
+    const btnHabilitado = await page
+      .evaluate(() => {
+        const btn = document.getElementById("enviar");
+        return btn ? !btn.disabled : false;
+      })
+      .catch(() => false);
+
+    if (!btnHabilitado) {
+      throw new Error(
+        "reCAPTCHA nao verificado automaticamente. Configure HEADLESS=false para resolver manualmente ou use TACOGRAFO_CAPTCHA_TIMEOUT_MS para aumentar o tempo de espera."
+      );
     }
 
-    if (!submitBtn) {
-      throw new Error("Botao de consulta nao encontrado na pagina do tacografo");
-    }
-
+    console.log(`[Tacografo] reCAPTCHA aprovado, submetendo para ${placa}`);
     await Promise.all([
       page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => null),
-      submitBtn.click()
+      page.locator("button#enviar").click()
     ]);
     await page.waitForTimeout(Number(process.env.PLAYWRIGHT_RESULT_DELAY_MS || 1200));
 
