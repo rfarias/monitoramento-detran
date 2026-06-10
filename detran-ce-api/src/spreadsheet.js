@@ -66,10 +66,11 @@ async function lerPlanilha(planilhaPath) {
     const tacografo =
       linha.tacografo ?? linha.Tacografo ?? linha.TACOGRAFO ??
       linha.tem_tacografo ?? linha.temTacografo ?? "";
+    const email = linha.email ?? linha.Email ?? linha.EMAIL ?? "";
 
     if (!placa && !renavam) return;
 
-    const validacao = validarVeiculo({ placa, renavam, tacografo });
+    const validacao = validarVeiculo({ placa, renavam, tacografo, email });
     if (validacao.valido) {
       veiculos.push(validacao.veiculo);
     } else {

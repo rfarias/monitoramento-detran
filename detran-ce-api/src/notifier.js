@@ -73,7 +73,7 @@ function formatarMensagemLote(resultadosComPendencia) {
   ].join("\n");
 }
 
-async function enviarEmail(mensagem, assunto) {
+async function enviarEmail(mensagem, assunto, destinatario) {
   if (!envBool("NOTIFY_EMAIL_ENABLED")) return { skipped: true, canal: "email" };
 
   const required = ["SMTP_HOST", "SMTP_USER", "SMTP_PASS", "EMAIL_FROM", "EMAIL_TO"];
@@ -92,14 +92,44 @@ async function enviarEmail(mensagem, assunto) {
     }
   });
 
+  const to = destinatario || process.env.EMAIL_TO;
+
   await transporter.sendMail({
     from: process.env.EMAIL_FROM,
-    to: process.env.EMAIL_TO,
+    to,
     subject: assunto,
     text: mensagem
   });
 
-  return { sent: true, canal: "email" };
+  return { sent: true, canal: "email", to };
+}
+
+async function enviarWhatsapp(mensagem) {
+  if (!envBool("WHATSAPP_ENABLED")) return { skipped: true, canal: "whatsapp" };
+
+  const apiUrl = process.env.EVOLUTION_API_URL;
+  const apiKey = process.env.EVOLUTION_API_KEY;
+  const instance = process.env.EVOLUTION_INSTANCE;
+  const number = process.env.WHATSAPP_NUMBER;
+
+  if (!apiUrl || !apiKey || !instance || !number) {
+    throw new Error("Config WhatsApp incompleta. Verifique EVOLUTION_API_URL, EVOLUTION_API_KEY, EVOLUTION_INSTANCE e WHATSAPP_NUMBER");
+  }
+
+  const response = await fetch(`${apiUrl}/message/sendText/${instance}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "apikey": apiKey
+    },
+    body: JSON.stringify({ number, text: mensagem })
+  });
+
+  if (!response.ok) {
+    throw new Error(`WhatsApp retornou HTTP ${response.status}`);
+  }
+
+  return { sent: true, canal: "whatsapp" };
 }
 
 async function enviarWebhook(mensagem, resultadosComPendencia) {
@@ -136,6 +166,7 @@ async function notificarPendencias(resultadosComPendencia) {
 
   envios.push(await enviarEmail(mensagem, assunto));
   envios.push(await enviarWebhook(mensagem, resultadosComPendencia));
+  envios.push(await enviarWhatsapp(mensagem));
 
   return { mensagem, envios };
 }
@@ -197,6 +228,7 @@ async function notificarTacografo(resultadosComAlerta) {
 
   envios.push(await enviarEmail(mensagem, assunto));
   envios.push(await enviarWebhook(mensagem, resultadosComAlerta));
+  envios.push(await enviarWhatsapp(mensagem));
 
   return { mensagem, envios };
 }
@@ -243,10 +275,37 @@ async function notificarCombinado(resultadosDetran, resultadosTacografo) {
   }
 
   const envios = [];
+
+  // Email principal para destinatários padrão
   envios.push(await enviarEmail(mensagem, assunto));
-  envios.push(
-    await enviarWebhook(mensagem, [...resultadosDetran, ...resultadosTacografo])
-  );
+
+  // Emails adicionais por placa: agrupa resultados pelo emailAdicional
+  const porEmail = new Map();
+  for (const r of resultadosDetran) {
+    if (!r.emailAdicional) continue;
+    if (!porEmail.has(r.emailAdicional)) porEmail.set(r.emailAdicional, { detran: [], tacografo: [] });
+    porEmail.get(r.emailAdicional).detran.push(r);
+  }
+  for (const r of resultadosTacografo) {
+    if (!r.emailAdicional) continue;
+    if (!porEmail.has(r.emailAdicional)) porEmail.set(r.emailAdicional, { detran: [], tacografo: [] });
+    porEmail.get(r.emailAdicional).tacografo.push(r);
+  }
+
+  for (const [emailDest, { detran, tacografo }] of porEmail.entries()) {
+    const msgFiltrada = formatarMensagemCombinada(detran, tacografo);
+    const tD = detran.length;
+    const tT = tacografo.length;
+    let assuntoFiltrado;
+    if (tD && tT) assuntoFiltrado = `Monitoramento: ${tD} Detran / ${tT} Tacografo`;
+    else if (tD) assuntoFiltrado = `Detran-CE: ${tD} ${pluralVeiculo(tD)}`;
+    else assuntoFiltrado = `Tacografo: ${tT} ${tT === 1 ? "veiculo com alerta" : "veiculos com alertas"}`;
+    envios.push(await enviarEmail(msgFiltrada, assuntoFiltrado, emailDest));
+  }
+
+  // WhatsApp e Webhook
+  envios.push(await enviarWhatsapp(mensagem));
+  envios.push(await enviarWebhook(mensagem, [...resultadosDetran, ...resultadosTacografo]));
 
   return { mensagem, envios };
 }

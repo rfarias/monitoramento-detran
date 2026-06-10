@@ -14,10 +14,16 @@ function normalizarTemTacografo(valor) {
   return ["sim", "s", "1", "true", "x", "yes"].includes(v);
 }
 
+function normalizarEmailAdicional(valor) {
+  const v = String(valor || "").trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) ? v : "";
+}
+
 function validarVeiculo(input) {
   const placa = normalizarPlaca(input?.placa);
   const renavam = normalizarRenavam(input?.renavam);
   const temTacografo = normalizarTemTacografo(input?.tacografo);
+  const emailAdicional = normalizarEmailAdicional(input?.email);
   const erros = [];
 
   if (!placa) erros.push("placa e obrigatoria");
@@ -32,7 +38,7 @@ function validarVeiculo(input) {
   return {
     valido: erros.length === 0,
     erros,
-    veiculo: { placa, renavam, temTacografo }
+    veiculo: { placa, renavam, temTacografo, emailAdicional }
   };
 }
 
