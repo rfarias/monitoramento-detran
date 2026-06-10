@@ -60,9 +60,10 @@ async function executarMonitoramentoTacografo() {
 
   console.log(`[Monitor Tacografo] Lendo planilha: ${PLANILHA_PATH}`);
   const veiculos = await lerPlanilha(PLANILHA_PATH);
-  const placas = veiculos.map((v) => v.placa);
+  const veiculosComTacografo = veiculos.filter((v) => v.temTacografo);
+  const placas = veiculosComTacografo.map((v) => v.placa);
 
-  console.log(`[Monitor Tacografo] Consultando ${placas.length} veiculos em lote (sessao unica)...`);
+  console.log(`[Monitor Tacografo] Consultando ${placas.length}/${veiculos.length} veiculos com tacografo (sessao unica)...`);
   const resultados = await consultarTacografosEmLote(placas);
 
   const resultadosComAlerta = [];

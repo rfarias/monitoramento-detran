@@ -9,9 +9,15 @@ function normalizarRenavam(renavam) {
     .replace(/\D/g, "");
 }
 
+function normalizarTemTacografo(valor) {
+  const v = String(valor || "").trim().toLowerCase();
+  return ["sim", "s", "1", "true", "x", "yes"].includes(v);
+}
+
 function validarVeiculo(input) {
   const placa = normalizarPlaca(input?.placa);
   const renavam = normalizarRenavam(input?.renavam);
+  const temTacografo = normalizarTemTacografo(input?.tacografo);
   const erros = [];
 
   if (!placa) erros.push("placa e obrigatoria");
@@ -26,7 +32,7 @@ function validarVeiculo(input) {
   return {
     valido: erros.length === 0,
     erros,
-    veiculo: { placa, renavam }
+    veiculo: { placa, renavam, temTacografo }
   };
 }
 

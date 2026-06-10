@@ -117,8 +117,9 @@ async function executarMonitoramentoCombinado() {
   const tacografoComAlerta = [];
 
   if (ehSegunda) {
-    console.log(`[Monitor] Iniciando consultas Tacografo (${veiculos.length} veiculos em lote)...`);
-    const tacografoResultados = await consultarTacografosEmLote(veiculos.map((v) => v.placa));
+    const veiculosComTacografo = veiculos.filter((v) => v.temTacografo);
+    console.log(`[Monitor] Iniciando consultas Tacografo (${veiculosComTacografo.length}/${veiculos.length} veiculos com tacografo)...`);
+    const tacografoResultados = await consultarTacografosEmLote(veiculosComTacografo.map((v) => v.placa));
 
     for (const resultado of tacografoResultados) {
       await adicionarConsultaTacografo(resultado);

@@ -63,10 +63,13 @@ async function lerPlanilha(planilhaPath) {
   linhas.forEach((linha, index) => {
     const placa = linha.placa ?? linha.Placa ?? linha.PLACA;
     const renavam = linha.renavam ?? linha.Renavam ?? linha.RENAVAM;
+    const tacografo =
+      linha.tacografo ?? linha.Tacografo ?? linha.TACOGRAFO ??
+      linha.tem_tacografo ?? linha.temTacografo ?? "";
 
     if (!placa && !renavam) return;
 
-    const validacao = validarVeiculo({ placa, renavam });
+    const validacao = validarVeiculo({ placa, renavam, tacografo });
     if (validacao.valido) {
       veiculos.push(validacao.veiculo);
     } else {
