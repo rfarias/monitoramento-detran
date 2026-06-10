@@ -39,7 +39,7 @@ function calcularAlertas(tipoDocumento, diasParaVencer) {
   const alertas = [];
   const tipo = normalizarTexto(tipoDocumento);
 
-  if (tipo && tipo !== "final") {
+  if (tipo && !tipo.includes("final")) {
     alertas.push("documento_nao_final");
   }
 
@@ -64,7 +64,7 @@ async function extrairIndicesColunas(table) {
     headers.push(normalizarTexto(await cells.nth(i).innerText().catch(() => "")));
   }
 
-  return {
+  const indices = {
     documento: headers.findIndex(
       (h) =>
         h.includes("documento") ||
@@ -80,6 +80,8 @@ async function extrairIndicesColunas(table) {
         h.includes("data de")
     )
   };
+
+  return indices;
 }
 
 async function parsearCertificadosDaTabela(page) {
