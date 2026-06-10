@@ -18,6 +18,10 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function toBool(value) {
+  return String(value).toLowerCase() === "true";
+}
+
 async function lerLog(logPath) {
   try {
     const content = await fs.readFile(logPath, "utf8");
@@ -106,21 +110,29 @@ async function executarMonitoramentoCombinado() {
   await registrarPendenciasDetran(detranComPendencia);
   console.log(`[Monitor Detran] Concluido. Pendencias: ${detranComPendencia.length}/${veiculos.length}`);
 
-  // --- Tacografo ---
-  console.log(`[Monitor] Iniciando consultas Tacografo (${veiculos.length} veiculos em lote, sessao unica)...`);
-  const tacografoResultados = await consultarTacografosEmLote(veiculos.map((v) => v.placa));
+  // --- Tacografo (somente segundas-feiras) ---
+  const diasSemana = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"];
+  const diaSemanaAtual = new Date().getDay();
+  const ehSegunda = diaSemanaAtual === 1 || toBool(process.env.FORCAR_TACOGRAFO || "false");
   const tacografoComAlerta = [];
 
-  for (const resultado of tacografoResultados) {
-    await adicionarConsultaTacografo(resultado);
-    if (resultado.status === "com_alertas") {
-      tacografoComAlerta.push(resultado);
-      console.log(`[Monitor Tacografo] Alerta: ${resultado.placa} [${resultado.alertas.join(", ")}]`);
-    }
-  }
+  if (ehSegunda) {
+    console.log(`[Monitor] Iniciando consultas Tacografo (${veiculos.length} veiculos em lote)...`);
+    const tacografoResultados = await consultarTacografosEmLote(veiculos.map((v) => v.placa));
 
-  await registrarAlertasTacografo(tacografoComAlerta);
-  console.log(`[Monitor Tacografo] Concluido. Alertas: ${tacografoComAlerta.length}/${veiculos.length}`);
+    for (const resultado of tacografoResultados) {
+      await adicionarConsultaTacografo(resultado);
+      if (resultado.status === "com_alertas") {
+        tacografoComAlerta.push(resultado);
+        console.log(`[Monitor Tacografo] Alerta: ${resultado.placa} [${resultado.alertas.join(", ")}]`);
+      }
+    }
+
+    await registrarAlertasTacografo(tacografoComAlerta);
+    console.log(`[Monitor Tacografo] Concluido. Alertas: ${tacografoComAlerta.length}/${veiculos.length}`);
+  } else {
+    console.log(`[Monitor] Tacografo ignorado hoje (${diasSemana[diaSemanaAtual]}). Roda somente na segunda-feira.`);
+  }
 
   // --- Notificação única ---
   const notificacao = await notificarCombinado(detranComPendencia, tacografoComAlerta);

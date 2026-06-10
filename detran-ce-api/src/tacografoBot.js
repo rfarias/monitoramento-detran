@@ -6,7 +6,8 @@ chromiumExtra.use(StealthPlugin());
 
 const TACOGRAFO_URL =
   process.env.TACOGRAFO_URL || "https://cronotacografo.rbmlq.gov.br/certificados/consultar";
-const DIAS_ALERTA = Number(process.env.TACOGRAFO_DIAS_ALERTA || 30);
+const DIAS_ALERTA = Number(process.env.TACOGRAFO_DIAS_ALERTA || 15);
+const RECAPTCHA_SITEKEY = "6LflVCIoAAAAAGnYVcmj_SIdBOcHDmdnObCeaX1n";
 
 function toBool(value) {
   return String(value).toLowerCase() === "true";
@@ -185,17 +186,99 @@ function montarResultadoErro(placa, mensagem) {
   };
 }
 
-async function aguardarReCaptcha(page) {
-  const captchaTimeoutMs = Number(process.env.TACOGRAFO_CAPTCHA_TIMEOUT_MS || 12000);
-  await page
-    .waitForFunction(
-      () => {
-        const btn = document.getElementById("enviar");
-        return btn && !btn.disabled;
-      },
-      { timeout: captchaTimeoutMs }
-    )
-    .catch(() => null);
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function resolverComCapsolver(apiKey, pageUrl) {
+  const createResp = await fetch("https://api.capsolver.com/createTask", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      clientKey: apiKey,
+      task: { type: "ReCaptchaV2TaskProxyLess", websiteURL: pageUrl, websiteKey: RECAPTCHA_SITEKEY }
+    })
+  });
+  const createData = await createResp.json();
+  if (createData.errorId) throw new Error(`CapSolver: ${createData.errorDescription}`);
+  const { taskId } = createData;
+  console.log(`[Tacografo] CapSolver taskId: ${taskId}`);
+
+  for (let i = 0; i < 40; i += 1) {
+    await sleep(3000);
+    const res = await fetch("https://api.capsolver.com/getTaskResult", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientKey: apiKey, taskId })
+    });
+    const data = await res.json();
+    if (data.status === "ready") return data.solution.gRecaptchaResponse;
+    if (data.errorId) throw new Error(`CapSolver: ${data.errorDescription}`);
+  }
+  throw new Error("CapSolver: timeout sem resposta em 120s");
+}
+
+async function resolverCom2captcha(apiKey, pageUrl) {
+  const submitResp = await fetch(
+    `https://2captcha.com/in.php?key=${apiKey}&method=userrecaptcha&googlekey=${RECAPTCHA_SITEKEY}&pageurl=${encodeURIComponent(pageUrl)}&json=1`
+  );
+  const submitData = await submitResp.json();
+  if (submitData.status !== 1) throw new Error(`2captcha: ${submitData.request}`);
+  const { request: taskId } = submitData;
+  console.log(`[Tacografo] 2captcha taskId: ${taskId}`);
+
+  await sleep(15000);
+  for (let i = 0; i < 30; i += 1) {
+    await sleep(3000);
+    const res = await fetch(
+      `https://2captcha.com/res.php?key=${apiKey}&action=get&id=${taskId}&json=1`
+    );
+    const data = await res.json();
+    if (data.status === 1) return data.request;
+    if (data.request !== "CAPCHA_NOT_READY") throw new Error(`2captcha: ${data.request}`);
+  }
+  throw new Error("2captcha: timeout sem resposta em ~105s");
+}
+
+async function injetarToken(page, token) {
+  await page.evaluate((t) => {
+    const textarea = document.getElementById("g-recaptcha-response");
+    if (textarea) {
+      textarea.innerHTML = t;
+      textarea.value = t;
+    }
+    if (typeof window.recaptchaCallback === "function") {
+      window.recaptchaCallback(t);
+    }
+  }, token);
+}
+
+async function resolverCaptcha(page) {
+  const capsolverKey = process.env.CAPSOLVER_API_KEY;
+  const twocaptchaKey = process.env.TWOCAPTCHA_API_KEY;
+
+  if (capsolverKey || twocaptchaKey) {
+    const token = capsolverKey
+      ? await resolverComCapsolver(capsolverKey, TACOGRAFO_URL)
+      : await resolverCom2captcha(twocaptchaKey, TACOGRAFO_URL);
+    console.log("[Tacografo] Token recebido, injetando...");
+    await injetarToken(page, token);
+    await page
+      .waitForFunction(
+        () => { const btn = document.getElementById("enviar"); return btn && !btn.disabled; },
+        { timeout: 10000 }
+      )
+      .catch(() => null);
+  } else {
+    // Sem API configurada: aguarda auto-aprovação do Google
+    const captchaTimeoutMs = Number(process.env.TACOGRAFO_CAPTCHA_TIMEOUT_MS || 12000);
+    await page
+      .waitForFunction(
+        () => { const btn = document.getElementById("enviar"); return btn && !btn.disabled; },
+        { timeout: captchaTimeoutMs }
+      )
+      .catch(() => null);
+  }
 
   return page
     .evaluate(() => {
@@ -241,14 +324,14 @@ async function consultarPlacaNaPagina(page, placa) {
 
   await placaInput.fill(placa);
 
-  console.log(`[Tacografo] Aguardando reCAPTCHA para ${placa}...`);
-  const aprovado = await aguardarReCaptcha(page);
+  console.log(`[Tacografo] Resolvendo reCAPTCHA para ${placa}...`);
+  const aprovado = await resolverCaptcha(page);
 
   if (!aprovado) {
-    throw new Error("reCAPTCHA nao verificado automaticamente");
+    throw new Error("reCAPTCHA nao resolvido");
   }
 
-  console.log(`[Tacografo] reCAPTCHA aprovado, submetendo para ${placa}`);
+  console.log(`[Tacografo] reCAPTCHA resolvido, submetendo para ${placa}`);
   await Promise.all([
     page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => null),
     page.locator("button#enviar").click()
