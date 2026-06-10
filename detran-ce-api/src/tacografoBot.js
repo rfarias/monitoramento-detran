@@ -253,14 +253,20 @@ async function injetarToken(page, token) {
   }, token);
 }
 
-async function resolverCaptcha(page) {
+// Dispara a resolução do CAPTCHA via API sem bloquear — retorna Promise<string|null>
+function iniciarResolucaoCaptcha() {
   const capsolverKey = process.env.CAPSOLVER_API_KEY;
   const twocaptchaKey = process.env.TWOCAPTCHA_API_KEY;
+  if (capsolverKey) return resolverComCapsolver(capsolverKey, TACOGRAFO_URL);
+  if (twocaptchaKey) return resolverCom2captcha(twocaptchaKey, TACOGRAFO_URL);
+  return Promise.resolve(null); // sem API: vai aguardar auto-aprovação
+}
 
-  if (capsolverKey || twocaptchaKey) {
-    const token = capsolverKey
-      ? await resolverComCapsolver(capsolverKey, TACOGRAFO_URL)
-      : await resolverCom2captcha(twocaptchaKey, TACOGRAFO_URL);
+// Recebe a promise já iniciada (resolvida em paralelo com a navegação)
+async function aplicarTokenCaptcha(page, captchaPromise) {
+  const token = await captchaPromise;
+
+  if (token) {
     console.log("[Tacografo] Token recebido, injetando...");
     await injetarToken(page, token);
     await page
@@ -270,7 +276,7 @@ async function resolverCaptcha(page) {
       )
       .catch(() => null);
   } else {
-    // Sem API configurada: aguarda auto-aprovação do Google
+    // Sem API: aguarda auto-aprovação do Google
     const captchaTimeoutMs = Number(process.env.TACOGRAFO_CAPTCHA_TIMEOUT_MS || 12000);
     await page
       .waitForFunction(
@@ -290,6 +296,9 @@ async function resolverCaptcha(page) {
 
 async function consultarPlacaNaPagina(page, placa) {
   console.log(`[Tacografo] Consultando ${placa}`);
+
+  // Dispara a resolução do CAPTCHA antes de navegar — os dois correm em paralelo
+  const captchaPromise = iniciarResolucaoCaptcha();
 
   await page.goto(TACOGRAFO_URL, {
     waitUntil: "domcontentloaded",
@@ -324,8 +333,8 @@ async function consultarPlacaNaPagina(page, placa) {
 
   await placaInput.fill(placa);
 
-  console.log(`[Tacografo] Resolvendo reCAPTCHA para ${placa}...`);
-  const aprovado = await resolverCaptcha(page);
+  console.log(`[Tacografo] Aguardando token de CAPTCHA para ${placa}...`);
+  const aprovado = await aplicarTokenCaptcha(page, captchaPromise);
 
   if (!aprovado) {
     throw new Error("reCAPTCHA nao resolvido");
