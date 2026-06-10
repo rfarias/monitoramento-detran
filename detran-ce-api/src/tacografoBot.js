@@ -297,13 +297,15 @@ async function aplicarTokenCaptcha(page, captchaPromise) {
 async function consultarPlacaNaPagina(page, placa) {
   console.log(`[Tacografo] Consultando ${placa}`);
 
-  // Dispara a resolução do CAPTCHA antes de navegar — os dois correm em paralelo
-  const captchaPromise = iniciarResolucaoCaptcha();
-
+  // Navega primeiro — só dispara o CapSolver após confirmar que o site respondeu
   await page.goto(TACOGRAFO_URL, {
     waitUntil: "domcontentloaded",
     timeout: Number(process.env.PLAYWRIGHT_NAVIGATION_TIMEOUT_MS || 45000)
   });
+
+  // Página respondeu: inicia resolução do CAPTCHA em paralelo com o restante do carregamento
+  const captchaPromise = iniciarResolucaoCaptcha();
+
   await page.waitForLoadState("load", { timeout: 15000 }).catch(() => null);
   await page.waitForTimeout(Number(process.env.PLAYWRIGHT_INITIAL_LOAD_DELAY_MS || 500));
 
