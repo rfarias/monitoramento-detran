@@ -186,30 +186,32 @@ async function notificarPendencias(resultadosComPendencia) {
   return { mensagem, envios };
 }
 
-function formatarAlertaTacografo(alerta) {
+function formatarAlertaTacografo(alerta, vencimento) {
+  const data = vencimento ? vencimento.split("-").reverse().join("/") : null;
   if (alerta === "vencido") return "certificado vencido";
-  if (alerta === "proximo_vencimento") return "certificado proximo do vencimento";
+  if (alerta === "proximo_vencimento") return data
+    ? `certificado proximo do vencimento (${data})`
+    : "certificado proximo do vencimento";
+  if (alerta === "certificado_preliminar") return data
+    ? `certificado preliminar ate ${data}`
+    : "certificado preliminar";
   if (alerta === "documento_nao_final") return "documento nao e final";
   return alerta;
 }
 
 function formatarMensagemVeiculoTacografo(resultado) {
   const alertas = resultado.alertas || [];
-  const detalhes = alertas.map(formatarAlertaTacografo);
-
   const certComAlerta = (resultado.certificados || []).find(
     (c) => c.alertas && c.alertas.length > 0
   );
-  const vencimentoInfo =
-    certComAlerta?.vencimento
-      ? ` (vence: ${certComAlerta.vencimento.split("-").reverse().join("/")})`
-      : "";
+  const vencimento = certComAlerta?.vencimento || null;
+  const detalhes = alertas.map((a) => formatarAlertaTacografo(a, vencimento));
 
   if (!detalhes.length) {
     return `- ${resultado.placa}: alerta de tacografo.`;
   }
 
-  return `- ${resultado.placa}: ${detalhes.join("; ")}${vencimentoInfo}.`;
+  return `- ${resultado.placa}: ${detalhes.join("; ")}.`;
 }
 
 function formatarMensagemLoteTacografo(resultadosComAlerta) {

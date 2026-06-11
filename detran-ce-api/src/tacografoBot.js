@@ -38,15 +38,19 @@ function calcularDiasParaVencer(vencimentoDate) {
 function calcularAlertas(tipoDocumento, diasParaVencer) {
   const alertas = [];
   const tipo = normalizarTexto(tipoDocumento);
+  const ehPreliminar = tipo.includes("preliminar");
 
-  if (tipo && !tipo.includes("final")) {
+  if (ehPreliminar) {
+    alertas.push("certificado_preliminar");
+  } else if (tipo && !tipo.includes("final")) {
     alertas.push("documento_nao_final");
   }
 
   if (diasParaVencer !== null) {
     if (diasParaVencer < 0) {
       alertas.push("vencido");
-    } else if (diasParaVencer <= DIAS_ALERTA) {
+    } else if (!ehPreliminar && diasParaVencer <= DIAS_ALERTA) {
+      // Proximo vencimento nao se aplica a preliminar (prazo esperado para emissao do definitivo)
       alertas.push("proximo_vencimento");
     }
   }
