@@ -67,10 +67,11 @@ async function lerPlanilha(planilhaPath) {
       linha.tacografo ?? linha.Tacografo ?? linha.TACOGRAFO ??
       linha.tem_tacografo ?? linha.temTacografo ?? "";
     const email = linha.email ?? linha.Email ?? linha.EMAIL ?? "";
+    const whatsapp = linha.whatsapp ?? linha.Whatsapp ?? linha.WHATSAPP ?? "";
 
     if (!placa && !renavam) return;
 
-    const validacao = validarVeiculo({ placa, renavam, tacografo, email });
+    const validacao = validarVeiculo({ placa, renavam, tacografo, email, whatsapp });
     if (validacao.valido) {
       veiculos.push(validacao.veiculo);
     } else {

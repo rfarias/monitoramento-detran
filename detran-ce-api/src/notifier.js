@@ -104,32 +104,47 @@ async function enviarEmail(mensagem, assunto, destinatario) {
   return { sent: true, canal: "email", to };
 }
 
-async function enviarWhatsapp(mensagem) {
+async function enviarWhatsapp(mensagem, destino) {
   if (!envBool("WHATSAPP_ENABLED")) return { skipped: true, canal: "whatsapp" };
 
   const apiUrl = process.env.EVOLUTION_API_URL;
   const apiKey = process.env.EVOLUTION_API_KEY;
   const instance = process.env.EVOLUTION_INSTANCE;
-  const number = process.env.WHATSAPP_NUMBER;
 
-  if (!apiUrl || !apiKey || !instance || !number) {
-    throw new Error("Config WhatsApp incompleta. Verifique EVOLUTION_API_URL, EVOLUTION_API_KEY, EVOLUTION_INSTANCE e WHATSAPP_NUMBER");
+  if (!apiUrl || !apiKey || !instance) {
+    throw new Error("Config WhatsApp incompleta. Verifique EVOLUTION_API_URL, EVOLUTION_API_KEY e EVOLUTION_INSTANCE");
   }
+
+  if (!destino) throw new Error("Destino WhatsApp nao informado");
 
   const response = await fetch(`${apiUrl}/message/sendText/${instance}`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "apikey": apiKey
-    },
-    body: JSON.stringify({ number, text: mensagem })
+    headers: { "Content-Type": "application/json", "apikey": apiKey },
+    body: JSON.stringify({ number: destino, text: mensagem })
   });
 
   if (!response.ok) {
     throw new Error(`WhatsApp retornou HTTP ${response.status}`);
   }
 
-  return { sent: true, canal: "whatsapp" };
+  return { sent: true, canal: "whatsapp", to: destino };
+}
+
+async function enviarWhatsappParaTodos(mensagem) {
+  if (!envBool("WHATSAPP_ENABLED")) return [{ skipped: true, canal: "whatsapp" }];
+
+  const raw = process.env.WHATSAPP_NUMBERS || process.env.WHATSAPP_NUMBER || "";
+  const destinos = raw.split(",").map((s) => s.trim()).filter(Boolean);
+
+  if (!destinos.length) {
+    throw new Error("Nenhum numero configurado em WHATSAPP_NUMBERS");
+  }
+
+  const resultados = [];
+  for (const destino of destinos) {
+    resultados.push(await enviarWhatsapp(mensagem, destino));
+  }
+  return resultados;
 }
 
 async function enviarWebhook(mensagem, resultadosComPendencia) {
@@ -166,7 +181,7 @@ async function notificarPendencias(resultadosComPendencia) {
 
   envios.push(await enviarEmail(mensagem, assunto));
   envios.push(await enviarWebhook(mensagem, resultadosComPendencia));
-  envios.push(await enviarWhatsapp(mensagem));
+  envios.push(...(await enviarWhatsappParaTodos(mensagem)));
 
   return { mensagem, envios };
 }
@@ -228,7 +243,7 @@ async function notificarTacografo(resultadosComAlerta) {
 
   envios.push(await enviarEmail(mensagem, assunto));
   envios.push(await enviarWebhook(mensagem, resultadosComAlerta));
-  envios.push(await enviarWhatsapp(mensagem));
+  envios.push(...(await enviarWhatsappParaTodos(mensagem)));
 
   return { mensagem, envios };
 }
@@ -303,8 +318,27 @@ async function notificarCombinado(resultadosDetran, resultadosTacografo) {
     envios.push(await enviarEmail(msgFiltrada, assuntoFiltrado, emailDest));
   }
 
-  // WhatsApp e Webhook
-  envios.push(await enviarWhatsapp(mensagem));
+  // WhatsApp global para todos os números/grupos configurados
+  envios.push(...(await enviarWhatsappParaTodos(mensagem)));
+
+  // WhatsApp adicional por placa
+  const porWhatsapp = new Map();
+  for (const r of resultadosDetran) {
+    if (!r.whatsappAdicional) continue;
+    if (!porWhatsapp.has(r.whatsappAdicional)) porWhatsapp.set(r.whatsappAdicional, { detran: [], tacografo: [] });
+    porWhatsapp.get(r.whatsappAdicional).detran.push(r);
+  }
+  for (const r of resultadosTacografo) {
+    if (!r.whatsappAdicional) continue;
+    if (!porWhatsapp.has(r.whatsappAdicional)) porWhatsapp.set(r.whatsappAdicional, { detran: [], tacografo: [] });
+    porWhatsapp.get(r.whatsappAdicional).tacografo.push(r);
+  }
+  for (const [dest, { detran, tacografo }] of porWhatsapp.entries()) {
+    const msgFiltrada = formatarMensagemCombinada(detran, tacografo);
+    envios.push(await enviarWhatsapp(msgFiltrada, dest));
+  }
+
+  // Webhook
   envios.push(await enviarWebhook(mensagem, [...resultadosDetran, ...resultadosTacografo]));
 
   return { mensagem, envios };

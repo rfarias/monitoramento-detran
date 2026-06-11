@@ -19,11 +19,19 @@ function normalizarEmailAdicional(valor) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) ? v : "";
 }
 
+function normalizarWhatsappAdicional(valor) {
+  const v = String(valor || "").trim();
+  if (v.endsWith("@g.us")) return v;
+  const digits = v.replace(/\D/g, "");
+  return digits.length >= 10 && digits.length <= 15 ? digits : "";
+}
+
 function validarVeiculo(input) {
   const placa = normalizarPlaca(input?.placa);
   const renavam = normalizarRenavam(input?.renavam);
   const temTacografo = normalizarTemTacografo(input?.tacografo);
   const emailAdicional = normalizarEmailAdicional(input?.email);
+  const whatsappAdicional = normalizarWhatsappAdicional(input?.whatsapp);
   const erros = [];
 
   if (!placa) erros.push("placa e obrigatoria");
@@ -38,7 +46,7 @@ function validarVeiculo(input) {
   return {
     valido: erros.length === 0,
     erros,
-    veiculo: { placa, renavam, temTacografo, emailAdicional }
+    veiculo: { placa, renavam, temTacografo, emailAdicional, whatsappAdicional }
   };
 }
 

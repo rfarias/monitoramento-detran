@@ -97,6 +97,7 @@ async function executarMonitoramentoCombinado() {
     const resultado = await consultarVeiculoDetranCe(veiculo);
     await adicionarConsulta(resultado);
     if (veiculo.emailAdicional) resultado.emailAdicional = veiculo.emailAdicional;
+    if (veiculo.whatsappAdicional) resultado.whatsappAdicional = veiculo.whatsappAdicional;
 
     if (resultado.status === "com_pendencias") {
       detranComPendencia.push(resultado);
@@ -126,6 +127,7 @@ async function executarMonitoramentoCombinado() {
       await adicionarConsultaTacografo(resultado);
       const veiculo = veiculosComTacografo.find((v) => v.placa === resultado.placa);
       if (veiculo?.emailAdicional) resultado.emailAdicional = veiculo.emailAdicional;
+      if (veiculo?.whatsappAdicional) resultado.whatsappAdicional = veiculo.whatsappAdicional;
 
       if (resultado.status === "com_alertas") {
         tacografoComAlerta.push(resultado);
