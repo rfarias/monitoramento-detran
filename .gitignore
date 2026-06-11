@@ -5,3 +5,4 @@ node_modules/
 downloads/
 *.log
 data/
+evolution-api/
