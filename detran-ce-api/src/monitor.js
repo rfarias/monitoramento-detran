@@ -9,6 +9,8 @@ const { notificarPendencias } = require("./notifier");
 
 const PLANILHA_PATH = process.env.PLANILHA_PATH || "./data/veiculos.xlsx";
 const MONITOR_CONCORRENCIA = Number(process.env.MONITOR_CONCORRENCIA || 3);
+const MONITOR_MAX_TENTATIVAS = Number(process.env.MONITOR_MAX_TENTATIVAS || 2);
+const MONITOR_RETRY_DELAY_MS = Number(process.env.MONITOR_RETRY_DELAY_MS || 120000);
 const MONITOR_LOG_PATH = path.resolve(process.env.MONITOR_LOG_PATH || "./data/pendencias-log.json");
 const MONITOR_MESSAGE_PATH = path.resolve(process.env.MONITOR_MESSAGE_PATH || "./data/ultima-mensagem.txt");
 
@@ -93,24 +95,53 @@ async function executarMonitoramento() {
   let consultados = 0;
 
   console.log(`[Monitor] Iniciando consultas (concorrencia: ${MONITOR_CONCORRENCIA})...`);
-  const browser = await abrirBrowser();
-  let resultados;
-  try {
-    const promessas = veiculos.map((veiculo) =>
-      limitar(async () => {
-        const n = ++consultados;
-        console.log(`[Monitor] Consultando ${n}/${veiculos.length}: ${veiculo.placa}`);
-        const resultado = await consultarComBrowser(browser, veiculo);
-        if (resultado.status === "com_pendencias") {
-          console.log(`[Monitor] Pendencia encontrada: ${veiculo.placa}`);
-        }
-        return resultado;
-      })
+  async function consultarLote(browser, lista) {
+    const limitar2 = criarLimitador(MONITOR_CONCORRENCIA);
+    return Promise.all(
+      lista.map((veiculo) =>
+        limitar2(async () => {
+          const n = ++consultados;
+          console.log(`[Monitor] Consultando ${n}/${veiculos.length}: ${veiculo.placa}`);
+          const resultado = await consultarComBrowser(browser, veiculo);
+          if (resultado.status === "com_pendencias") {
+            console.log(`[Monitor] Pendencia encontrada: ${veiculo.placa}`);
+          }
+          return resultado;
+        })
+      )
     );
-    resultados = await Promise.all(promessas);
-  } finally {
-    await browser.close().catch(() => null);
   }
+
+  let resultados;
+  {
+    const browser = await abrirBrowser();
+    try {
+      resultados = await consultarLote(browser, veiculos);
+    } finally {
+      await browser.close().catch(() => null);
+    }
+  }
+
+  for (let tentativa = 2; tentativa <= MONITOR_MAX_TENTATIVAS; tentativa++) {
+    const indicesErro = resultados.map((r, i) => (r.status === "erro" ? i : -1)).filter((i) => i >= 0);
+    if (!indicesErro.length) break;
+
+    const veiculosComErro = indicesErro.map((i) => veiculos[i]);
+    const delaySeg = Math.round(MONITOR_RETRY_DELAY_MS / 1000);
+    console.log(`[Monitor] ${veiculosComErro.length} veiculo(s) com erro. Tentativa ${tentativa}/${MONITOR_MAX_TENTATIVAS} em ${delaySeg}s...`);
+    await new Promise((r) => setTimeout(r, MONITOR_RETRY_DELAY_MS));
+
+    const browser = await abrirBrowser();
+    try {
+      const retryResultados = await consultarLote(browser, veiculosComErro);
+      indicesErro.forEach((origIdx, i) => { resultados[origIdx] = retryResultados[i]; });
+    } finally {
+      await browser.close().catch(() => null);
+    }
+  }
+
+  const errosFinais = resultados.filter((r) => r.status === "erro").length;
+  if (errosFinais > 0) console.log(`[Monitor] ${errosFinais} veiculo(s) permaneceram com erro apos todas as tentativas.`);
 
   for (const resultado of resultados) {
     await adicionarConsulta(resultado);
