@@ -200,15 +200,26 @@ async function enviarWebhook(mensagem, resultadosComPendencia) {
   return { sent: true, canal: "webhook" };
 }
 
+async function tentarEnviar(fn, descricao) {
+  try {
+    return await fn();
+  } catch (err) {
+    console.error(`[Notifier] Falha ao enviar via ${descricao}: ${err.message}`);
+    return { erro: true, canal: descricao, mensagem: err.message };
+  }
+}
+
 async function notificarPendencias(resultadosComPendencia) {
   const mensagem = formatarMensagemLote(resultadosComPendencia);
   const total = resultadosComPendencia.length;
   const assunto = `Detran-CE: ${total} ${pluralVeiculo(total)}`;
   const envios = [];
 
-  envios.push(await enviarEmail(mensagem, assunto));
-  envios.push(await enviarWebhook(mensagem, resultadosComPendencia));
-  envios.push(...(await enviarWhatsappParaTodos(mensagem)));
+  envios.push(await tentarEnviar(() => enviarEmail(mensagem, assunto), "email"));
+  envios.push(await tentarEnviar(() => enviarWebhook(mensagem, resultadosComPendencia), "webhook"));
+  const whatsResults = await tentarEnviar(() => enviarWhatsappParaTodos(mensagem), "whatsapp");
+  if (Array.isArray(whatsResults)) envios.push(...whatsResults);
+  else envios.push(whatsResults);
 
   return { mensagem, envios };
 }
@@ -270,9 +281,11 @@ async function notificarTacografo(resultadosComAlerta) {
   const assunto = `Tacografo: ${total} ${pluralStr}`;
   const envios = [];
 
-  envios.push(await enviarEmail(mensagem, assunto));
-  envios.push(await enviarWebhook(mensagem, resultadosComAlerta));
-  envios.push(...(await enviarWhatsappParaTodos(mensagem)));
+  envios.push(await tentarEnviar(() => enviarEmail(mensagem, assunto), "email"));
+  envios.push(await tentarEnviar(() => enviarWebhook(mensagem, resultadosComAlerta), "webhook"));
+  const whatsResults = await tentarEnviar(() => enviarWhatsappParaTodos(mensagem), "whatsapp");
+  if (Array.isArray(whatsResults)) envios.push(...whatsResults);
+  else envios.push(whatsResults);
 
   return { mensagem, envios };
 }
@@ -321,9 +334,9 @@ async function notificarCombinado(resultadosDetran, resultadosTacografo) {
   const envios = [];
 
   // Email principal para destinatários padrão
-  envios.push(await enviarEmail(mensagem, assunto));
+  envios.push(await tentarEnviar(() => enviarEmail(mensagem, assunto), "email"));
 
-  // Emails adicionais por placa: agrupa resultados pelo emailAdicional
+  // Emails adicionais por placa
   const porEmail = new Map();
   for (const r of resultadosDetran) {
     if (!r.emailAdicional) continue;
@@ -344,11 +357,13 @@ async function notificarCombinado(resultadosDetran, resultadosTacografo) {
     if (tD && tT) assuntoFiltrado = `Monitoramento: ${tD} Detran / ${tT} Tacografo`;
     else if (tD) assuntoFiltrado = `Detran-CE: ${tD} ${pluralVeiculo(tD)}`;
     else assuntoFiltrado = `Tacografo: ${tT} ${tT === 1 ? "veiculo com alerta" : "veiculos com alertas"}`;
-    envios.push(await enviarEmail(msgFiltrada, assuntoFiltrado, emailDest));
+    envios.push(await tentarEnviar(() => enviarEmail(msgFiltrada, assuntoFiltrado, emailDest), `email:${emailDest}`));
   }
 
-  // WhatsApp global para todos os números/grupos configurados
-  envios.push(...(await enviarWhatsappParaTodos(mensagem)));
+  // WhatsApp global
+  const whatsResults = await tentarEnviar(() => enviarWhatsappParaTodos(mensagem), "whatsapp");
+  if (Array.isArray(whatsResults)) envios.push(...whatsResults);
+  else envios.push(whatsResults);
 
   // WhatsApp adicional por placa
   const porWhatsapp = new Map();
@@ -364,11 +379,11 @@ async function notificarCombinado(resultadosDetran, resultadosTacografo) {
   }
   for (const [dest, { detran, tacografo }] of porWhatsapp.entries()) {
     const msgFiltrada = formatarMensagemCombinada(detran, tacografo);
-    envios.push(await enviarWhatsapp(msgFiltrada, dest));
+    envios.push(await tentarEnviar(() => enviarWhatsapp(msgFiltrada, dest), `whatsapp:${dest}`));
   }
 
   // Webhook
-  envios.push(await enviarWebhook(mensagem, [...resultadosDetran, ...resultadosTacografo]));
+  envios.push(await tentarEnviar(() => enviarWebhook(mensagem, [...resultadosDetran, ...resultadosTacografo]), "webhook"));
 
   return { mensagem, envios };
 }

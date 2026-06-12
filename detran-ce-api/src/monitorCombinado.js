@@ -109,13 +109,13 @@ async function executarMonitoramentoCombinado() {
   let consultados = 0;
 
   const browser = await abrirBrowser();
+  let resultados;
   try {
     const promessas = veiculos.map((veiculo) =>
       limitar(async () => {
         const n = ++consultados;
         console.log(`[Monitor Detran] ${n}/${veiculos.length}: ${veiculo.placa}`);
         const resultado = await consultarComBrowser(browser, veiculo);
-        await adicionarConsulta(resultado);
         if (veiculo.emailAdicional) resultado.emailAdicional = veiculo.emailAdicional;
         if (veiculo.whatsappAdicional) resultado.whatsappAdicional = veiculo.whatsappAdicional;
         if (resultado.status === "com_pendencias") {
@@ -125,11 +125,15 @@ async function executarMonitoramentoCombinado() {
       })
     );
 
-    const resultados = await Promise.all(promessas);
-    detranComPendencia.push(...resultados.filter((r) => r.status === "com_pendencias"));
+    resultados = await Promise.all(promessas);
   } finally {
     await browser.close().catch(() => null);
   }
+
+  for (const resultado of resultados) {
+    await adicionarConsulta(resultado);
+  }
+  detranComPendencia.push(...resultados.filter((r) => r.status === "com_pendencias"));
 
   await registrarPendenciasDetran(detranComPendencia);
   console.log(`[Monitor Detran] Concluido. Pendencias: ${detranComPendencia.length}/${veiculos.length}`);

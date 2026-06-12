@@ -101,7 +101,6 @@ async function executarMonitoramento() {
         const n = ++consultados;
         console.log(`[Monitor] Consultando ${n}/${veiculos.length}: ${veiculo.placa}`);
         const resultado = await consultarComBrowser(browser, veiculo);
-        await adicionarConsulta(resultado);
         if (resultado.status === "com_pendencias") {
           console.log(`[Monitor] Pendencia encontrada: ${veiculo.placa}`);
         }
@@ -111,6 +110,10 @@ async function executarMonitoramento() {
     resultados = await Promise.all(promessas);
   } finally {
     await browser.close().catch(() => null);
+  }
+
+  for (const resultado of resultados) {
+    await adicionarConsulta(resultado);
   }
 
   const resultadosComPendencia = resultados.filter((r) => r.status === "com_pendencias");
