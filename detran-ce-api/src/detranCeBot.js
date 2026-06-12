@@ -664,17 +664,8 @@ async function salvarScreenshotErro(page, veiculo) {
   return `/downloads/errors/${fileName}`;
 }
 
-async function consultarVeiculoDetranCe(veiculo) {
-  await garantirDiretorios();
-
-  const browser = await chromium.launch({
-    headless: toBool(process.env.HEADLESS ?? "true")
-  });
-
-  const context = await browser.newContext({
-    acceptDownloads: true
-  });
-
+async function consultarComBrowser(browser, veiculo) {
+  const context = await browser.newContext({ acceptDownloads: true });
   const page = await context.newPage();
   page.setDefaultTimeout(Number(process.env.PLAYWRIGHT_TIMEOUT_MS || 45000));
 
@@ -755,11 +746,26 @@ async function consultarVeiculoDetranCe(veiculo) {
     });
   } finally {
     await context.close().catch(() => null);
+  }
+}
+
+async function consultarVeiculoDetranCe(veiculo) {
+  await garantirDiretorios();
+  const browser = await chromium.launch({ headless: toBool(process.env.HEADLESS ?? "true") });
+  try {
+    return await consultarComBrowser(browser, veiculo);
+  } finally {
     await browser.close().catch(() => null);
   }
 }
 
+function abrirBrowser() {
+  return chromium.launch({ headless: toBool(process.env.HEADLESS ?? "true") });
+}
+
 module.exports = {
   SELECTORS,
-  consultarVeiculoDetranCe
+  consultarVeiculoDetranCe,
+  consultarComBrowser,
+  abrirBrowser
 };

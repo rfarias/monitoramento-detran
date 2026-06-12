@@ -3,17 +3,33 @@ require("dotenv").config();
 const fs = require("fs/promises");
 const path = require("path");
 const { lerPlanilha } = require("./spreadsheet");
-const { consultarVeiculoDetranCe } = require("./detranCeBot");
+const { consultarComBrowser, abrirBrowser } = require("./detranCeBot");
 const { adicionarConsulta, garantirDiretorios } = require("./storage");
 const { notificarPendencias } = require("./notifier");
 
 const PLANILHA_PATH = process.env.PLANILHA_PATH || "./data/veiculos.xlsx";
-const DELAY_ENTRE_CONSULTAS_MS = Number(process.env.DELAY_ENTRE_CONSULTAS_MS || 5000);
+const MONITOR_CONCORRENCIA = Number(process.env.MONITOR_CONCORRENCIA || 3);
 const MONITOR_LOG_PATH = path.resolve(process.env.MONITOR_LOG_PATH || "./data/pendencias-log.json");
 const MONITOR_MESSAGE_PATH = path.resolve(process.env.MONITOR_MESSAGE_PATH || "./data/ultima-mensagem.txt");
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function criarLimitador(concorrencia) {
+  let ativos = 0;
+  const fila = [];
+  return function limitar(fn) {
+    return new Promise((resolve, reject) => {
+      function executar() {
+        ativos++;
+        Promise.resolve(fn())
+          .then(resolve, reject)
+          .finally(() => {
+            ativos--;
+            if (fila.length > 0) fila.shift()();
+          });
+      }
+      if (ativos < concorrencia) executar();
+      else fila.push(executar);
+    });
+  };
 }
 
 async function lerLogPendencias() {
@@ -73,27 +89,31 @@ async function executarMonitoramento() {
 
   console.log(`[Monitor] Lendo planilha: ${PLANILHA_PATH}`);
   const veiculos = await lerPlanilha(PLANILHA_PATH);
-  const resultados = [];
-  const resultadosComPendencia = [];
+  const limitar = criarLimitador(MONITOR_CONCORRENCIA);
+  let consultados = 0;
 
-  for (let i = 0; i < veiculos.length; i += 1) {
-    const veiculo = veiculos[i];
-    console.log(`[Monitor] Consultando ${i + 1}/${veiculos.length}: ${veiculo.placa}`);
-
-    const resultado = await consultarVeiculoDetranCe(veiculo);
-    await adicionarConsulta(resultado);
-    resultados.push(resultado);
-
-    if (resultado.status === "com_pendencias") {
-      resultadosComPendencia.push(resultado);
-      console.log(`[Monitor] Pendencia encontrada: ${veiculo.placa}`);
-    }
-
-    if (i < veiculos.length - 1 && DELAY_ENTRE_CONSULTAS_MS > 0) {
-      await sleep(DELAY_ENTRE_CONSULTAS_MS);
-    }
+  console.log(`[Monitor] Iniciando consultas (concorrencia: ${MONITOR_CONCORRENCIA})...`);
+  const browser = await abrirBrowser();
+  let resultados;
+  try {
+    const promessas = veiculos.map((veiculo) =>
+      limitar(async () => {
+        const n = ++consultados;
+        console.log(`[Monitor] Consultando ${n}/${veiculos.length}: ${veiculo.placa}`);
+        const resultado = await consultarComBrowser(browser, veiculo);
+        await adicionarConsulta(resultado);
+        if (resultado.status === "com_pendencias") {
+          console.log(`[Monitor] Pendencia encontrada: ${veiculo.placa}`);
+        }
+        return resultado;
+      })
+    );
+    resultados = await Promise.all(promessas);
+  } finally {
+    await browser.close().catch(() => null);
   }
 
+  const resultadosComPendencia = resultados.filter((r) => r.status === "com_pendencias");
   const registros = await registrarPendencias(resultadosComPendencia);
   const notificacao = await notificarPendencias(resultadosComPendencia);
   await salvarUltimaMensagem(notificacao.mensagem);
