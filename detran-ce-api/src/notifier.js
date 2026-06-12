@@ -105,41 +105,68 @@ async function enviarEmail(mensagem, assunto, destinatario) {
 }
 
 async function enviarWhatsapp(mensagem, destino) {
-  if (!envBool("WHATSAPP_ENABLED")) return { skipped: true, canal: "whatsapp" };
+  if (!envBool("WHATSAPP_ENABLED")) {
+    console.log("[WhatsApp] Desabilitado (WHATSAPP_ENABLED=false). Pulando envio.");
+    return { skipped: true, canal: "whatsapp" };
+  }
 
   const apiUrl = process.env.EVOLUTION_API_URL;
   const apiKey = process.env.EVOLUTION_API_KEY;
   const instance = process.env.EVOLUTION_INSTANCE;
 
   if (!apiUrl || !apiKey || !instance) {
-    throw new Error("Config WhatsApp incompleta. Verifique EVOLUTION_API_URL, EVOLUTION_API_KEY e EVOLUTION_INSTANCE");
+    const err = new Error("Config WhatsApp incompleta. Verifique EVOLUTION_API_URL, EVOLUTION_API_KEY e EVOLUTION_INSTANCE");
+    console.error(`[WhatsApp] ${err.message}`);
+    throw err;
   }
 
-  if (!destino) throw new Error("Destino WhatsApp nao informado");
+  if (!destino) {
+    const err = new Error("Destino WhatsApp nao informado");
+    console.error(`[WhatsApp] ${err.message}`);
+    throw err;
+  }
 
-  const response = await fetch(`${apiUrl}/message/sendText/${instance}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "apikey": apiKey },
-    body: JSON.stringify({ number: destino, text: mensagem })
-  });
+  console.log(`[WhatsApp] Enviando para ${destino} via ${apiUrl} (instancia: ${instance})...`);
+
+  let response;
+  try {
+    response = await fetch(`${apiUrl}/message/sendText/${instance}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "apikey": apiKey },
+      body: JSON.stringify({ number: destino, text: mensagem })
+    });
+  } catch (err) {
+    console.error(`[WhatsApp] Falha de conexao com a Evolution API: ${err.message}`);
+    throw err;
+  }
 
   if (!response.ok) {
-    throw new Error(`WhatsApp retornou HTTP ${response.status}`);
+    const body = await response.text().catch(() => "");
+    const err = new Error(`WhatsApp retornou HTTP ${response.status}: ${body}`);
+    console.error(`[WhatsApp] ${err.message}`);
+    throw err;
   }
 
+  console.log(`[WhatsApp] Enviado com sucesso para ${destino}.`);
   return { sent: true, canal: "whatsapp", to: destino };
 }
 
 async function enviarWhatsappParaTodos(mensagem) {
-  if (!envBool("WHATSAPP_ENABLED")) return [{ skipped: true, canal: "whatsapp" }];
+  if (!envBool("WHATSAPP_ENABLED")) {
+    console.log("[WhatsApp] Desabilitado (WHATSAPP_ENABLED=false). Pulando envio.");
+    return [{ skipped: true, canal: "whatsapp" }];
+  }
 
   const raw = process.env.WHATSAPP_NUMBERS || process.env.WHATSAPP_NUMBER || "";
   const destinos = raw.split(",").map((s) => s.trim()).filter(Boolean);
 
   if (!destinos.length) {
-    throw new Error("Nenhum numero configurado em WHATSAPP_NUMBERS");
+    const err = new Error("Nenhum numero configurado em WHATSAPP_NUMBERS");
+    console.error(`[WhatsApp] ${err.message}`);
+    throw err;
   }
 
+  console.log(`[WhatsApp] Enviando para ${destinos.length} destino(s): ${destinos.join(", ")}`);
   const resultados = [];
   for (const destino of destinos) {
     resultados.push(await enviarWhatsapp(mensagem, destino));
