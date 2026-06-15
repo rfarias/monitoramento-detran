@@ -14,6 +14,8 @@ const TACOGRAFO_LOG_PATH = path.resolve(
 const TACOGRAFO_MESSAGE_PATH = path.resolve(
   process.env.TACOGRAFO_MESSAGE_PATH || "./data/ultima-mensagem-tacografo.txt"
 );
+const TACOGRAFO_MAX_TENTATIVAS = Number(process.env.TACOGRAFO_MAX_TENTATIVAS || process.env.MONITOR_MAX_TENTATIVAS || 2);
+const TACOGRAFO_RETRY_DELAY_MS = Number(process.env.TACOGRAFO_RETRY_DELAY_MS || process.env.MONITOR_RETRY_DELAY_MS || 120000);
 
 async function lerLogTacografo() {
   try {
@@ -65,6 +67,22 @@ async function executarMonitoramentoTacografo() {
 
   console.log(`[Monitor Tacografo] Consultando ${placas.length}/${veiculos.length} veiculos com tacografo (sessao unica)...`);
   const resultados = await consultarTacografosEmLote(placas);
+
+  for (let tentativa = 2; tentativa <= TACOGRAFO_MAX_TENTATIVAS; tentativa++) {
+    const indicesErro = resultados.map((r, i) => (r.status === "erro" ? i : -1)).filter((i) => i >= 0);
+    if (!indicesErro.length) break;
+
+    const placasComErro = indicesErro.map((i) => placas[i]);
+    const delaySeg = Math.round(TACOGRAFO_RETRY_DELAY_MS / 1000);
+    console.log(`[Monitor Tacografo] ${placasComErro.length} veiculo(s) com erro. Tentativa ${tentativa}/${TACOGRAFO_MAX_TENTATIVAS} em ${delaySeg}s...`);
+    await new Promise((r) => setTimeout(r, TACOGRAFO_RETRY_DELAY_MS));
+
+    const retryResultados = await consultarTacografosEmLote(placasComErro);
+    indicesErro.forEach((origIdx, i) => { resultados[origIdx] = retryResultados[i]; });
+  }
+
+  const errosFinais = resultados.filter((r) => r.status === "erro").length;
+  if (errosFinais > 0) console.log(`[Monitor Tacografo] ${errosFinais} veiculo(s) permaneceram com erro apos todas as tentativas.`);
 
   const resultadosComAlerta = [];
   for (const resultado of resultados) {

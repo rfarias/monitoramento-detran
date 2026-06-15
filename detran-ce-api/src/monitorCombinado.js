@@ -177,7 +177,24 @@ async function executarMonitoramentoCombinado() {
   if (ehSegunda) {
     const veiculosComTacografo = veiculos.filter((v) => v.temTacografo);
     console.log(`[Monitor] Iniciando consultas Tacografo (${veiculosComTacografo.length}/${veiculos.length} veiculos com tacografo)...`);
-    const tacografoResultados = await consultarTacografosEmLote(veiculosComTacografo.map((v) => v.placa));
+    const placasTacografo = veiculosComTacografo.map((v) => v.placa);
+    const tacografoResultados = await consultarTacografosEmLote(placasTacografo);
+
+    for (let tentativa = 2; tentativa <= MONITOR_MAX_TENTATIVAS; tentativa++) {
+      const indicesErro = tacografoResultados.map((r, i) => (r.status === "erro" ? i : -1)).filter((i) => i >= 0);
+      if (!indicesErro.length) break;
+
+      const placasComErro = indicesErro.map((i) => placasTacografo[i]);
+      const delaySeg = Math.round(MONITOR_RETRY_DELAY_MS / 1000);
+      console.log(`[Monitor Tacografo] ${placasComErro.length} veiculo(s) com erro. Tentativa ${tentativa}/${MONITOR_MAX_TENTATIVAS} em ${delaySeg}s...`);
+      await new Promise((r) => setTimeout(r, MONITOR_RETRY_DELAY_MS));
+
+      const retryResultados = await consultarTacografosEmLote(placasComErro);
+      indicesErro.forEach((origIdx, i) => { tacografoResultados[origIdx] = retryResultados[i]; });
+    }
+
+    const errosTacografo = tacografoResultados.filter((r) => r.status === "erro").length;
+    if (errosTacografo > 0) console.log(`[Monitor Tacografo] ${errosTacografo} veiculo(s) permaneceram com erro apos todas as tentativas.`);
 
     for (const resultado of tacografoResultados) {
       await adicionarConsultaTacografo(resultado);
