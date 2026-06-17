@@ -125,7 +125,7 @@ Esses arquivos sao operacionais, assim como a planilha de veiculos, e ficam fora
 
 ## Agendamento No Windows
 
-Estado atual (atualizado em 16/06/2026), configurado direto no Agendador de Tarefas do Windows — nao versionado em arquivo, por isso documentado aqui.
+Estado atual (atualizado em 17/06/2026), configurado direto no Agendador de Tarefas do Windows — nao versionado em arquivo, por isso documentado aqui.
 
 ### Tarefa "Monitoramento Detran CE"
 
@@ -144,30 +144,40 @@ cd detran-ce-api
 
 Ha tambem `agendar-monitoramento-windows.bat`, que cria uma tarefa nova chamada "Monitoramento Detran e Tacografo" (nome diferente da tarefa "Monitoramento Detran CE" que esta em uso). Criar tarefas novas via `schtasks`/`Register-ScheduledTask` exige PowerShell como Administrador neste ambiente — modificar uma tarefa existente nao exige.
 
-### Tarefa "Evolution API - WhatsApp"
+### Evolution API (WhatsApp) — sob demanda, sem tarefa propria
 
-A Evolution API (servidor que envia as mensagens de WhatsApp) precisa ficar rodando continuamente, em processo separado do monitor.
+A Evolution API **nao fica mais rodando continuamente**. Antes existia uma tarefa separada ("Evolution API - WhatsApp", gatilho `AtLogOn`) para mante-la sempre de pe, mas isso consumia recursos o tempo todo e dependia de um restart automatico do Task Scheduler que se mostrou pouco confiavel — toda vez que o processo era fechado manualmente (ex.: fechar o cmd), ele nao voltava sozinho e o WhatsApp parava de enviar sem aviso.
 
-**Por que e uma tarefa separada:** o Windows Task Scheduler agrupa o processo principal de uma tarefa e todos os processos "filhos" que ele inicia (`start`, etc.) no mesmo Job Object. Quando o processo principal termina, o Task Scheduler mata todo o Job, incluindo os filhos ainda em execucao. Por isso, iniciar a Evolution API de dentro do `.bat` do monitor (`start ... npx tsx ./src/main.ts`) nao funciona: a API sobe durante a execucao do monitor mas e encerrada junto quando o monitor termina. A solucao e uma tarefa independente, dedicada so a Evolution API.
+A solucao atual: o proprio `notifier.js` (`detran-ce-api/src/evolutionApiManager.js`) sobe a Evolution API **somente no momento de enviar a mensagem de WhatsApp**, espera ela ficar pronta (`state: "open"`), envia, e **encerra o processo em seguida** — tudo dentro da mesma execucao do monitor, sem deixar nada residente.
 
-- Executa `iniciar-whatsapp.bat` (na raiz do projeto).
-- Gatilho: `AtLogOn` (inicia quando o usuario Romario faz logon no Windows).
-- `ExecutionTimeLimit = 0` (sem limite de tempo — precisa ficar rodando indefinidamente).
-- Restart automatico: `RestartCount = 999`, `RestartInterval = 1 minuto` (se o processo cair, o Task Scheduler tenta reiniciar).
-- Criada via PowerShell como Administrador (criar tarefa nova exigiu elevacao; so modificar tarefas existentes nao exige).
-- Antes dessa tarefa existir, foi usado um atalho na pasta Inicializacao (`shell:startup`) como solucao temporaria — removido depois que a tarefa agendada passou a cobrir o mesmo caso.
+- `garantirEvolutionApiAtiva()`: se a API ja estiver rodando (ex.: alguem testando manualmente), reaproveita. Caso contrario, inicia `npx tsx ./src/main.ts` dentro de `evolution-api/` via `child_process.spawn` com `windowsHide: true` — nao abre nenhuma janela de cmd/PowerShell. Espera (polling de 2 em 2s, timeout configuravel por `EVOLUTION_API_STARTUP_TIMEOUT_MS`, padrao 60s) at o `connectionState` retornar `"open"`.
+- `pararEvolutionApi()`: mata a arvore de processos (`taskkill /PID <pid> /T /F`) logo apos o envio, garantindo que nada fica preso ou ocupando a porta 8080. So mata o processo que ele mesmo iniciou — se a API ja estava rodando externamente, nao toca nela.
+- Esse ciclo (subir → enviar → derrubar) acontece em `notificarPendencias`, `notificarTacografo` e `notificarCombinado`, e so e acionado se `WHATSAPP_ENABLED=true` no `.env`.
+- A sessao do WhatsApp (login/QR Code) e persistida pela propria Evolution API entre reinicios, entao nao e necessario reconectar a cada execucao.
 
-Para verificar se esta saudavel:
+Testado manualmente em 17/06/2026: subida oculta, envio real de WhatsApp e encerramento automatico, sem deixar processo `node.exe` nem porta 8080 aberta depois.
+
+**Tarefa antiga "Evolution API - WhatsApp": parada, mas ainda existe e ainda esta habilitada.** Como ela tem gatilho `AtLogOn`, ela volta a subir no proximo login do Windows se nao for desabilitada — e isso conflita com o novo fluxo sob demanda. Desabilitar essa tarefa exige PowerShell como Administrador (modificar `Enabled` foi negado em sessao sem elevacao). Para desabilitar:
 
 ```powershell
-Get-ScheduledTask -TaskName "Evolution API - WhatsApp" | Select-Object State
+Disable-ScheduledTask -TaskName "Evolution API - WhatsApp"
+```
+
+(Pode tambem excluir a tarefa pelo Agendador de Tarefas do Windows, ja que ela nao e mais necessaria.)
+
+Para checar manualmente se o WhatsApp esta saudavel (so funciona enquanto uma execucao estiver no meio do envio, ja que a API nao fica de pe fora disso):
+
+```powershell
 netstat -ano | Select-String ":8080" | Select-String "LISTENING"
 Invoke-RestMethod -Uri "http://localhost:8080/instance/connectionState/detran-monitor" -Headers @{ apikey = "<EVOLUTION_API_KEY do .env>" }
 ```
 
-O resultado esperado em `connectionState` e `"state": "open"`. Se aparecer outro estado, a sessao do WhatsApp pode ter caido e precisar de novo QR Code (`evolution-api`, endpoint de conexao/QR).
+Se quiser testar o envio isoladamente, sem esperar o agendamento:
 
-**Cuidado ao depurar manualmente:** rodar `npx tsx ./src/main.ts` a mao enquanto a tarefa agendada tambem esta tentando subir gera processos `node` duplicados disputando a porta 8080 (only um deles consegue dar bind). Se isso acontecer, finalize todos os processos `node` da Evolution API (`Get-CimInstance Win32_Process -Filter "Name='node.exe'"` para identificar pelo `CommandLine`) e use `Stop-ScheduledTask` + `Start-ScheduledTask` para deixar a tarefa reiniciar de forma limpa, com uma unica instancia.
+```powershell
+cd detran-ce-api
+node -e "require('dotenv').config(); const { notificarCombinado } = require('./src/notifier'); notificarCombinado([{ placa: 'TESTE123', renavam: '00000000000', status: 'com_pendencias', pendencias: [{ tipo: 'multa', quantidade: 1 }] }], []).then(r => console.log(r.envios)).catch(e => console.error(e.message));"
+```
 
 ## API Local
 

@@ -1,4 +1,5 @@
 const nodemailer = require("nodemailer");
+const { garantirEvolutionApiAtiva, pararEvolutionApi } = require("./evolutionApiManager");
 
 function envBool(name, defaultValue = false) {
   const value = process.env[name];
@@ -214,12 +215,19 @@ async function notificarPendencias(resultadosComPendencia) {
   const total = resultadosComPendencia.length;
   const assunto = `Detran-CE: ${total} ${pluralVeiculo(total)}`;
   const envios = [];
+  const whatsappAtivo = envBool("WHATSAPP_ENABLED");
 
   envios.push(await tentarEnviar(() => enviarEmail(mensagem, assunto), "email"));
   envios.push(await tentarEnviar(() => enviarWebhook(mensagem, resultadosComPendencia), "webhook"));
-  const whatsResults = await tentarEnviar(() => enviarWhatsappParaTodos(mensagem), "whatsapp");
-  if (Array.isArray(whatsResults)) envios.push(...whatsResults);
-  else envios.push(whatsResults);
+
+  if (whatsappAtivo) await garantirEvolutionApiAtiva();
+  try {
+    const whatsResults = await tentarEnviar(() => enviarWhatsappParaTodos(mensagem), "whatsapp");
+    if (Array.isArray(whatsResults)) envios.push(...whatsResults);
+    else envios.push(whatsResults);
+  } finally {
+    if (whatsappAtivo) pararEvolutionApi();
+  }
 
   return { mensagem, envios };
 }
@@ -280,12 +288,19 @@ async function notificarTacografo(resultadosComAlerta) {
     total === 1 ? "veiculo com alerta" : "veiculos com alertas";
   const assunto = `Tacografo: ${total} ${pluralStr}`;
   const envios = [];
+  const whatsappAtivo = envBool("WHATSAPP_ENABLED");
 
   envios.push(await tentarEnviar(() => enviarEmail(mensagem, assunto), "email"));
   envios.push(await tentarEnviar(() => enviarWebhook(mensagem, resultadosComAlerta), "webhook"));
-  const whatsResults = await tentarEnviar(() => enviarWhatsappParaTodos(mensagem), "whatsapp");
-  if (Array.isArray(whatsResults)) envios.push(...whatsResults);
-  else envios.push(whatsResults);
+
+  if (whatsappAtivo) await garantirEvolutionApiAtiva();
+  try {
+    const whatsResults = await tentarEnviar(() => enviarWhatsappParaTodos(mensagem), "whatsapp");
+    if (Array.isArray(whatsResults)) envios.push(...whatsResults);
+    else envios.push(whatsResults);
+  } finally {
+    if (whatsappAtivo) pararEvolutionApi();
+  }
 
   return { mensagem, envios };
 }
@@ -360,26 +375,31 @@ async function notificarCombinado(resultadosDetran, resultadosTacografo) {
     envios.push(await tentarEnviar(() => enviarEmail(msgFiltrada, assuntoFiltrado, emailDest), `email:${emailDest}`));
   }
 
-  // WhatsApp global
-  const whatsResults = await tentarEnviar(() => enviarWhatsappParaTodos(mensagem), "whatsapp");
-  if (Array.isArray(whatsResults)) envios.push(...whatsResults);
-  else envios.push(whatsResults);
+  // WhatsApp (global + adicional por placa)
+  const whatsappAtivo = envBool("WHATSAPP_ENABLED");
+  if (whatsappAtivo) await garantirEvolutionApiAtiva();
+  try {
+    const whatsResults = await tentarEnviar(() => enviarWhatsappParaTodos(mensagem), "whatsapp");
+    if (Array.isArray(whatsResults)) envios.push(...whatsResults);
+    else envios.push(whatsResults);
 
-  // WhatsApp adicional por placa
-  const porWhatsapp = new Map();
-  for (const r of resultadosDetran) {
-    if (!r.whatsappAdicional) continue;
-    if (!porWhatsapp.has(r.whatsappAdicional)) porWhatsapp.set(r.whatsappAdicional, { detran: [], tacografo: [] });
-    porWhatsapp.get(r.whatsappAdicional).detran.push(r);
-  }
-  for (const r of resultadosTacografo) {
-    if (!r.whatsappAdicional) continue;
-    if (!porWhatsapp.has(r.whatsappAdicional)) porWhatsapp.set(r.whatsappAdicional, { detran: [], tacografo: [] });
-    porWhatsapp.get(r.whatsappAdicional).tacografo.push(r);
-  }
-  for (const [dest, { detran, tacografo }] of porWhatsapp.entries()) {
-    const msgFiltrada = formatarMensagemCombinada(detran, tacografo);
-    envios.push(await tentarEnviar(() => enviarWhatsapp(msgFiltrada, dest), `whatsapp:${dest}`));
+    const porWhatsapp = new Map();
+    for (const r of resultadosDetran) {
+      if (!r.whatsappAdicional) continue;
+      if (!porWhatsapp.has(r.whatsappAdicional)) porWhatsapp.set(r.whatsappAdicional, { detran: [], tacografo: [] });
+      porWhatsapp.get(r.whatsappAdicional).detran.push(r);
+    }
+    for (const r of resultadosTacografo) {
+      if (!r.whatsappAdicional) continue;
+      if (!porWhatsapp.has(r.whatsappAdicional)) porWhatsapp.set(r.whatsappAdicional, { detran: [], tacografo: [] });
+      porWhatsapp.get(r.whatsappAdicional).tacografo.push(r);
+    }
+    for (const [dest, { detran, tacografo }] of porWhatsapp.entries()) {
+      const msgFiltrada = formatarMensagemCombinada(detran, tacografo);
+      envios.push(await tentarEnviar(() => enviarWhatsapp(msgFiltrada, dest), `whatsapp:${dest}`));
+    }
+  } finally {
+    if (whatsappAtivo) pararEvolutionApi();
   }
 
   // Webhook
