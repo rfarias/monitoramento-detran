@@ -173,9 +173,10 @@ async function executarMonitoramentoCombinado() {
   const diaSemanaAtual = new Date().getDay();
   const ehSegunda = diaSemanaAtual === 1 || toBool(process.env.FORCAR_TACOGRAFO || "false");
   const tacografoComAlerta = [];
+  let veiculosComTacografo = [];
 
   if (ehSegunda) {
-    const veiculosComTacografo = veiculos.filter((v) => v.temTacografo);
+    veiculosComTacografo = veiculos.filter((v) => v.temTacografo);
     console.log(`[Monitor] Iniciando consultas Tacografo (${veiculosComTacografo.length}/${veiculos.length} veiculos com tacografo)...`);
     const placasTacografo = veiculosComTacografo.map((v) => v.placa);
     const tacografoResultados = await consultarTacografosEmLote(placasTacografo);
@@ -215,7 +216,10 @@ async function executarMonitoramentoCombinado() {
   }
 
   // --- Notificação única ---
-  const notificacao = await notificarCombinado(detranComPendencia, tacografoComAlerta);
+  const notificacao = await notificarCombinado(detranComPendencia, tacografoComAlerta, {
+    tacografoExecutado: ehSegunda,
+    totalTacografoVerificado: veiculosComTacografo.length
+  });
 
   await fs.mkdir(path.dirname(MONITOR_MESSAGE_PATH), { recursive: true });
   await fs.writeFile(MONITOR_MESSAGE_PATH, notificacao.mensagem, "utf8");

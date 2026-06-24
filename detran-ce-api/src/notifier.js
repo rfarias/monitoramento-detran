@@ -305,7 +305,7 @@ async function notificarTacografo(resultadosComAlerta) {
   return { mensagem, envios };
 }
 
-function formatarMensagemCombinada(resultadosDetran, resultadosTacografo) {
+function formatarMensagemCombinada(resultadosDetran, resultadosTacografo, opcoes = {}) {
   const dataHora = formatarDataHora();
   const secoes = [];
 
@@ -320,6 +320,11 @@ function formatarMensagemCombinada(resultadosDetran, resultadosTacografo) {
     const pluralStr = total === 1 ? "veiculo com alerta" : "veiculos com alertas";
     const linhas = resultadosTacografo.map(formatarMensagemVeiculoTacografo).join("\n");
     secoes.push(`[Tacografo] ${total} ${pluralStr}:\n${linhas}`);
+  } else if (opcoes.tacografoExecutado) {
+    const sufixo = opcoes.totalTacografoVerificado
+      ? ` (${opcoes.totalTacografoVerificado} ${opcoes.totalTacografoVerificado === 1 ? "veiculo verificado" : "veiculos verificados"})`
+      : "";
+    secoes.push(`[Tacografo] Nenhum alerta encontrado${sufixo}.`);
   }
 
   if (!secoes.length) {
@@ -329,8 +334,8 @@ function formatarMensagemCombinada(resultadosDetran, resultadosTacografo) {
   return [`Monitoramento - ${dataHora}`, "", ...secoes].join("\n\n");
 }
 
-async function notificarCombinado(resultadosDetran, resultadosTacografo) {
-  const mensagem = formatarMensagemCombinada(resultadosDetran, resultadosTacografo);
+async function notificarCombinado(resultadosDetran, resultadosTacografo, opcoes = {}) {
+  const mensagem = formatarMensagemCombinada(resultadosDetran, resultadosTacografo, opcoes);
   const totalDetran = resultadosDetran.length;
   const totalTacografo = resultadosTacografo.length;
 
