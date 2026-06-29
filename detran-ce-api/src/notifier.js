@@ -327,11 +327,19 @@ function formatarMensagemCombinada(resultadosDetran, resultadosTacografo, opcoes
     secoes.push(`[Tacografo] Nenhum alerta encontrado${sufixo}.`);
   }
 
+  const errosDetran = (opcoes.detranComErro || []).map((r) => `${r.placa} (Detran-CE)`);
+  const errosTacografo = (opcoes.tacografoComErro || []).map((r) => `${r.placa} (Tacografo)`);
+  const todosErros = [...errosDetran, ...errosTacografo];
+  if (todosErros.length) {
+    const plural = todosErros.length === 1 ? "veiculo nao consultado" : "veiculos nao consultados";
+    secoes.push(`[Erro] ${todosErros.length} ${plural}: ${todosErros.join(", ")}.`);
+  }
+
   if (!secoes.length) {
     return `Monitoramento - ${dataHora}\n\nNenhuma pendencia ou alerta encontrado.`;
   }
 
-  return [`Monitoramento - ${dataHora}`, "", ...secoes].join("\n\n");
+  return [`Monitoramento - ${dataHora}`, ...secoes].join("\n\n");
 }
 
 async function notificarCombinado(resultadosDetran, resultadosTacografo, opcoes = {}) {

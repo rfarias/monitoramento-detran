@@ -56,6 +56,32 @@ async function salvarLog(logPath, log) {
   await fs.writeFile(logPath, JSON.stringify(log, null, 2), "utf8");
 }
 
+async function purgarLogs() {
+  const agoraMs = Date.now();
+  const MS_30_DIAS = 30 * 24 * 60 * 60 * 1000;
+  const MS_180_DIAS = 180 * 24 * 60 * 60 * 1000;
+
+  const logDetran = await lerLog(MONITOR_LOG_PATH);
+  const logDetranFiltrado = logDetran.filter((e) => {
+    const ts = new Date(e.registradoEm || e.consultadoEm).getTime();
+    return agoraMs - ts <= MS_30_DIAS;
+  });
+  if (logDetranFiltrado.length !== logDetran.length) {
+    await salvarLog(MONITOR_LOG_PATH, logDetranFiltrado);
+    console.log(`[Monitor] Log Detran purgado: ${logDetran.length - logDetranFiltrado.length} entrada(s) removidas (>30 dias).`);
+  }
+
+  const logTaco = await lerLog(TACOGRAFO_LOG_PATH);
+  const logTacoFiltrado = logTaco.filter((e) => {
+    const ts = new Date(e.registradoEm || e.consultadoEm).getTime();
+    return agoraMs - ts <= MS_180_DIAS;
+  });
+  if (logTacoFiltrado.length !== logTaco.length) {
+    await salvarLog(TACOGRAFO_LOG_PATH, logTacoFiltrado);
+    console.log(`[Monitor] Log Tacografo purgado: ${logTaco.length - logTacoFiltrado.length} entrada(s) removidas (>180 dias).`);
+  }
+}
+
 async function registrarPendenciasDetran(resultadosComPendencia) {
   if (!resultadosComPendencia.length) return;
   const log = await lerLog(MONITOR_LOG_PATH);
@@ -100,6 +126,7 @@ async function registrarAlertasTacografo(resultadosComAlerta) {
 
 async function executarMonitoramentoCombinado() {
   await garantirDiretorios();
+  await purgarLogs();
 
   console.log(`[Monitor] Lendo planilha: ${PLANILHA_PATH}`);
   const veiculos = await lerPlanilha(PLANILHA_PATH);
@@ -157,8 +184,8 @@ async function executarMonitoramentoCombinado() {
     }
   }
 
-  const errosFinais = resultados.filter((r) => r.status === "erro").length;
-  if (errosFinais > 0) console.log(`[Monitor Detran] ${errosFinais} veiculo(s) permaneceram com erro apos todas as tentativas.`);
+  const detranComErro = resultados.filter((r) => r.status === "erro");
+  if (detranComErro.length > 0) console.log(`[Monitor Detran] ${detranComErro.length} veiculo(s) permaneceram com erro apos todas as tentativas.`);
 
   for (const resultado of resultados) {
     await adicionarConsulta(resultado);
@@ -173,6 +200,7 @@ async function executarMonitoramentoCombinado() {
   const diaSemanaAtual = new Date().getDay();
   const ehSegunda = diaSemanaAtual === 1 || toBool(process.env.FORCAR_TACOGRAFO || "false");
   const tacografoComAlerta = [];
+  let tacografoComErro = [];
   let veiculosComTacografo = [];
 
   if (ehSegunda) {
@@ -194,8 +222,8 @@ async function executarMonitoramentoCombinado() {
       indicesErro.forEach((origIdx, i) => { tacografoResultados[origIdx] = retryResultados[i]; });
     }
 
-    const errosTacografo = tacografoResultados.filter((r) => r.status === "erro").length;
-    if (errosTacografo > 0) console.log(`[Monitor Tacografo] ${errosTacografo} veiculo(s) permaneceram com erro apos todas as tentativas.`);
+    tacografoComErro = tacografoResultados.filter((r) => r.status === "erro");
+    if (tacografoComErro.length > 0) console.log(`[Monitor Tacografo] ${tacografoComErro.length} veiculo(s) permaneceram com erro apos todas as tentativas.`);
 
     for (const resultado of tacografoResultados) {
       await adicionarConsultaTacografo(resultado);
@@ -218,7 +246,9 @@ async function executarMonitoramentoCombinado() {
   // --- Notificação única ---
   const notificacao = await notificarCombinado(detranComPendencia, tacografoComAlerta, {
     tacografoExecutado: ehSegunda,
-    totalTacografoVerificado: veiculosComTacografo.length
+    totalTacografoVerificado: veiculosComTacografo.length,
+    detranComErro,
+    tacografoComErro
   });
 
   await fs.mkdir(path.dirname(MONITOR_MESSAGE_PATH), { recursive: true });
