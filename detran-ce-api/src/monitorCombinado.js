@@ -11,6 +11,7 @@ const { notificarCombinado } = require("./notifier");
 const PLANILHA_PATH = process.env.PLANILHA_PATH || "./data/veiculos.xlsx";
 const MONITOR_CONCORRENCIA = Number(process.env.MONITOR_CONCORRENCIA || 3);
 const MONITOR_MAX_TENTATIVAS = Number(process.env.MONITOR_MAX_TENTATIVAS || 2);
+const TACOGRAFO_MAX_TENTATIVAS = Number(process.env.TACOGRAFO_MAX_TENTATIVAS || 10);
 const MONITOR_RETRY_DELAY_MS = Number(process.env.MONITOR_RETRY_DELAY_MS || 120000);
 const MONITOR_LOG_PATH = path.resolve(process.env.MONITOR_LOG_PATH || "./data/pendencias-log.json");
 const TACOGRAFO_LOG_PATH = path.resolve(process.env.TACOGRAFO_LOG_PATH || "./data/tacografo-log.json");
@@ -209,13 +210,18 @@ async function executarMonitoramentoCombinado() {
     const placasTacografo = veiculosComTacografo.map((v) => v.placa);
     const tacografoResultados = await consultarTacografosEmLote(placasTacografo);
 
-    for (let tentativa = 2; tentativa <= MONITOR_MAX_TENTATIVAS; tentativa++) {
+    for (let tentativa = 2; ; tentativa++) {
       const indicesErro = tacografoResultados.map((r, i) => (r.status === "erro" ? i : -1)).filter((i) => i >= 0);
       if (!indicesErro.length) break;
 
+      if (tentativa > TACOGRAFO_MAX_TENTATIVAS) {
+        console.log(`[Monitor Tacografo] ${indicesErro.length} veiculo(s) com erro apos ${TACOGRAFO_MAX_TENTATIVAS} tentativas. Desistindo.`);
+        break;
+      }
+
       const placasComErro = indicesErro.map((i) => placasTacografo[i]);
       const delaySeg = Math.round(MONITOR_RETRY_DELAY_MS / 1000);
-      console.log(`[Monitor Tacografo] ${placasComErro.length} veiculo(s) com erro. Tentativa ${tentativa}/${MONITOR_MAX_TENTATIVAS} em ${delaySeg}s...`);
+      console.log(`[Monitor Tacografo] ${placasComErro.length} veiculo(s) com erro. Tentativa ${tentativa} em ${delaySeg}s...`);
       await new Promise((r) => setTimeout(r, MONITOR_RETRY_DELAY_MS));
 
       const retryResultados = await consultarTacografosEmLote(placasComErro);

@@ -6,7 +6,7 @@ chromiumExtra.use(StealthPlugin());
 
 const TACOGRAFO_URL =
   process.env.TACOGRAFO_URL || "https://cronotacografo.rbmlq.gov.br/certificados/consultar";
-const DIAS_ALERTA = Number(process.env.TACOGRAFO_DIAS_ALERTA || 15);
+const DIAS_ALERTA = Number(process.env.TACOGRAFO_DIAS_ALERTA || 21);
 const RECAPTCHA_SITEKEY = "6LflVCIoAAAAAGnYVcmj_SIdBOcHDmdnObCeaX1n";
 
 function toBool(value) {
